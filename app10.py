@@ -28,13 +28,13 @@ def save_config(api, url):
 saved_api, saved_url = load_config()
 
 # ==========================================
-# 2. BearJoy 視覺佈局 (手機版防跑位強化)
+# 2. BearJoy 視覺佈局 (智慧推擠防重疊版)
 # ==========================================
 st.set_page_config(page_title="BearJoy 智能客服", page_icon="✦", layout="wide")
 
 # 💡【專屬高度控制台】
-NAV_TOP_POSITION = "1rem"         # 此版已改為絕對定位，這個參數主要控制內部留白
-SETTINGS_BOTTOM_POSITION = "40px" # 設定區塊距離底部的懸空高度
+NAV_TOP_POSITION = "1rem"         # 導航距離頂部的留白高度
+SETTINGS_BOTTOM_GAP = "2rem"      # 設定區塊與最底部的安全距離 (避免太貼齊邊緣)
 
 st.markdown("""
 <meta name="google" content="notranslate">
@@ -55,7 +55,7 @@ st.markdown("""
     .stApp > header { background-color: transparent !important; }
     
     /* ========================================= */
-    /* 側邊欄精準鎖定策略 (強化手機版防跑位) */
+    /* 側邊欄精準鎖定策略 (智慧推擠、徹底解決重疊) */
     /* ========================================= */
     [data-testid="stSidebar"] { 
         background-color: #F0EDE5 !important; 
@@ -63,160 +63,111 @@ st.markdown("""
     }
     
     [data-testid="stSidebarUserContent"] { 
-        display: block !important; /* 改回 block，避免 flexbox 在手機上錯亂 */
-        height: 100% !important;   /* 改用 100%，適應手機動態網址列 */
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100vh !important; /* 滿版高度 */
         position: relative !important; 
-        padding-top: 5rem !important; /* 預留頂部空間給絕對定位的導航 */
-        overflow: hidden !important; 
-    }
-
-    /* 🌟 終極殺手鐧：將導航標題與選單強制「絕對定位」在最上方 */
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div:first-child,
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div:nth-child(2) {
-        position: absolute !important;
-        left: 1rem !important;
-        right: 1rem !important;
-        z-index: 100 !important;
+        padding-top: """ + NAV_TOP_POSITION + """ !important; 
+        padding-bottom: """ + SETTINGS_BOTTOM_GAP + """ !important; 
+        overflow-y: auto !important; /* 恢復滾動保護，防止小螢幕被切斷 */
+        overflow-x: hidden !important;
     }
     
-    /* 分別指定第一段(標題)和第二段(Radio按鈕)的高度位置 */
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div:first-child {
-        top: """ + NAV_TOP_POSITION + """ !important; 
+    /* 利用 flexbox 自動把設定區塊推到最下面，永不重疊導航 */
+    .spacer {
+        flex-grow: 1 !important;
+        min-height: 20px !important; 
     }
-    [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div:nth-child(2) {
-        top: calc(""" + NAV_TOP_POSITION + """ + 2.5rem) !important; /* 緊接在標題下方 */
-    }
-
-    /* 鎖定側邊欄設定區塊絕對定位到底部 */
-    [data-testid="stSidebar"] [data-testid="stExpander"] {
-        position: absolute !important;
-        bottom: """ + SETTINGS_BOTTOM_POSITION + """ !important; 
-        left: 15px !important;
-        right: 15px !important;
-        width: auto !important;
-        margin: 0 !important;
-        z-index: 100 !important;
+    
+    /* 確保最後一個元素 (設定區塊) 乖乖待在下面 */
+    [data-testid="stSidebarUserContent"] > div:last-child {
+        margin-top: auto !important;
     }
     
     /* ========================================= */
     /* 極致壓縮設定區塊的行距 */
     /* ========================================= */
-    div[data-testid="stExpander"] details {
-        padding-bottom: 0px !important;
-    }
-    div[data-testid="stTextInput"] {
-        margin-bottom: -10px !important; 
-    }
-    div[data-testid="stTextInput"] label {
-        padding-bottom: 0px !important;
-        margin-bottom: 0px !important;
-        font-size: 13px !important;
-    }
-    div[data-testid="stTextInput"] input {
-        padding: 4px 8px !important;
-        min-height: 30px !important;
-        font-size: 13px !important;
-    }
+    div[data-testid="stExpander"] details { padding-bottom: 0px !important; }
+    div[data-testid="stTextInput"] { margin-bottom: -10px !important; }
+    div[data-testid="stTextInput"] label { padding-bottom: 0px !important; margin-bottom: 0px !important; font-size: 13px !important; }
+    div[data-testid="stTextInput"] input { padding: 4px 8px !important; min-height: 30px !important; font-size: 13px !important; }
     
     /* ========================================= */
-    /* 儲存連線 與 已連線 樣式統一大小 */
+    /* 儲存連線 與 已連線 樣式統一大小 (38px 高度, 16px 字體) */
     /* ========================================= */
     [data-testid="stSidebar"] .stButton>button {
         background-color: #798571 !important; 
         border-radius: 6px !important; border: none !important;
-        height: 38px !important;
-        min-height: 38px !important;
-        padding: 0px !important; 
-        width: 100% !important; 
-        box-sizing: border-box !important;
-        margin-top: 5px !important;
-        margin-bottom: 0px !important;
-        box-shadow: 0 2px 4px rgba(121, 133, 113, 0.2) !important;
-        transition: all 0.3s ease; 
+        height: 38px !important; min-height: 38px !important;
+        padding: 0px !important; width: 100% !important; box-sizing: border-box !important;
+        margin-top: 5px !important; margin-bottom: 0px !important;
+        box-shadow: 0 2px 4px rgba(121, 133, 113, 0.2) !important; transition: all 0.3s ease; 
     }
-    [data-testid="stSidebar"] .stButton>button p,
-    [data-testid="stSidebar"] .stButton>button span {
-        color: #FFFFFF !important;
-        font-size: 16px !important; 
-        font-weight: bold !important;
-        letter-spacing: 1px !important;
-        margin: 0 !important;
+    [data-testid="stSidebar"] .stButton>button p, [data-testid="stSidebar"] .stButton>button span {
+        color: #FFFFFF !important; font-size: 16px !important; font-weight: bold !important; letter-spacing: 1px !important; margin: 0 !important;
     }
-    [data-testid="stSidebar"] .stButton>button:hover { 
-        background-color: #5F6B58 !important; transform: translateY(-2px); 
-    }
+    [data-testid="stSidebar"] .stButton>button:hover { background-color: #5F6B58 !important; transform: translateY(-2px); }
     
-    [data-testid="stSidebar"] div[data-testid="stAlert"] {
-        display: none !important; 
-    }
+    [data-testid="stSidebar"] div[data-testid="stAlert"] { display: none !important; }
     .custom-status-box {
-        height: 38px !important;
-        min-height: 38px !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
-        padding: 0px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        border-radius: 6px !important;
-        margin-top: 5px !important;
-        margin-bottom: 0px !important;
-        font-size: 16px !important;
-        font-weight: bold !important;
-        letter-spacing: 1px !important;
-        color: #4A4238 !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
+        height: 38px !important; min-height: 38px !important; width: 100% !important; box-sizing: border-box !important;
+        padding: 0px !important; display: flex !important; align-items: center !important; justify-content: center !important;
+        border-radius: 6px !important; margin-top: 5px !important; margin-bottom: 0px !important;
+        font-size: 16px !important; font-weight: bold !important; letter-spacing: 1px !important;
+        color: #4A4238 !important; box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
     }
     .status-success { background-color: #DCE8D6 !important; border: 1px solid #C4D4BC !important; }
     .status-warning { background-color: #F8E3D0 !important; border: 1px solid #E6C5A8 !important; }
     
     /* ========================================= */
-    /* 主畫面按鈕 */
+    /* 主畫面按鈕 (開始解析並同步) */
     /* ========================================= */
     .stApp > div > div .stButton>button {
-        background-color: #798571 !important; 
-        height: auto !important;
-        min-height: 36px !important;
-        padding: 6px 14px !important; 
-        font-size: 14px !important; 
-        width: auto !important; 
-        min-width: 120px !important; 
-        border-radius: 6px !important; 
-        border: none !important;
-        font-weight: bold !important;
-        letter-spacing: 1px; transition: all 0.3s ease; 
-        box-shadow: 0 2px 4px rgba(121, 133, 113, 0.2) !important;
+        background-color: #798571 !important; height: auto !important; min-height: 36px !important;
+        padding: 6px 14px !important; font-size: 14px !important; width: auto !important; min-width: 120px !important; 
+        border-radius: 6px !important; border: none !important; font-weight: bold !important;
+        letter-spacing: 1px; transition: all 0.3s ease; box-shadow: 0 2px 4px rgba(121, 133, 113, 0.2) !important;
     }
-    .stApp > div > div .stButton>button:hover { 
-        background-color: #5F6B58 !important; transform: translateY(-2px); 
-    }
-    .stApp > div > div .stButton>button p, 
-    .stApp > div > div .stButton>button span {
-        color: #FFFFFF !important;
-    }
+    .stApp > div > div .stButton>button:hover { background-color: #5F6B58 !important; transform: translateY(-2px); }
+    .stApp > div > div .stButton>button p, .stApp > div > div .stButton>button span { color: #FFFFFF !important; }
     
     div[data-testid="stExpander"] {
-        border: 1px solid #EAE7E0 !important; background-color: #FFFFFF !important;
-        border-radius: 8px !important; margin-bottom: 15px !important;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.03) !important;
+        border: 1px solid #EAE7E0 !important; background-color: #FFFFFF !important; border-radius: 8px !important; 
+        margin-bottom: 15px !important; box-shadow: 0 2px 10px rgba(0,0,0,0.03) !important;
     }
     .stCodeBlock { border-radius: 8px !important; border: 1px solid #EAE7E0 !important; background-color: #FAFAFA !important;}
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 3. 雲端連線引擎與排版設定
+# 3. 雲端雙棲連線引擎 (全新升級！)
 # ==========================================
 def connect_google_sheets(url):
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    key_path = os.path.join(current_dir, "google_key.json")
-    if os.path.exists(key_path):
-        try:
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = None
+
+        # 優先方案：嘗試從 Streamlit 雲端 Secrets 讀取 (解決手機版未連線)
+        if "type" in st.secrets and st.secrets["type"] == "service_account":
+            creds_dict = dict(st.secrets)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # 備用方案：如果雲端找不到，就從電腦本地資料夾讀取 google_key.json (解決電腦版未連線)
+        else:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            key_path = os.path.join(current_dir, "google_key.json")
+            if os.path.exists(key_path):
+                creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
+
+        # 執行授權與連線
+        if creds:
             gc = gspread.authorize(creds)
             return gc.open_by_url(url)
-        except Exception: return None
+            
+    except Exception as e:
+        # 如果網址不正確或權限沒開，會在此攔截，不會讓程式崩潰
+        pass
+        
     return None
 
 def format_google_sheet(ws):
@@ -227,12 +178,14 @@ def format_google_sheet(ws):
         pass
 
 # ==========================================
-# 4. 側邊欄：導航菜單與自動貼底的設定
+# 4. 側邊欄：導航菜單與自動推擠的設定
 # ==========================================
 with st.sidebar:
-    # 這裡的順序很重要，CSS 會根據順序去鎖定位置
     st.markdown("### ✦ BearJoy 導航")
     menu = st.radio("功能選單", ["智能客服系統"], label_visibility="collapsed")
+    
+    # 這是智慧推擠元素，它會自動撐開空間，把下方的設定壓到最底，且絕不重疊！
+    st.markdown('<div class="spacer"></div>', unsafe_allow_html=True)
     
     with st.expander("⚙️ 設定", expanded=False):
         api_key = st.text_input("API 金鑰:", value=saved_api, type="password")

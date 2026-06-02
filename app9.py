@@ -276,6 +276,83 @@ def base64_chunks_to_img(chunks):
     b64_str = "".join(chunks)
     return Image.open(BytesIO(base64.b64decode(b64_str)))
 
+# ==========================================
+# ✨ 銷售加值工具：AI 分析、好評圖
+# ==========================================
+def gemini_generate(api_key, contents):
+    """呼叫 Gemini，自動換模型重試；失敗回傳 None。"""
+    try:
+        client = genai.Client(api_key=api_key)
+    except Exception:
+        return None
+    for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+        for _ in range(3):
+            try:
+                time.sleep(2)
+                resp = client.models.generate_content(model=model_name, contents=contents)
+                return resp.text
+            except Exception:
+                continue
+    return None
+
+def _mask_account(acc):
+    """遮罩客戶帳號中間字元，保護隱私（公開貼圖用）。"""
+    acc = str(acc).strip()
+    if len(acc) <= 2:
+        return acc[:1] + "*"
+    return acc[0] + "*" * (len(acc) - 2) + acc[-1]
+
+def make_review_card(reviews):
+    """把 [(帳號, 評價內容), ...] 排成一張好評圖，回傳 PIL Image。"""
+    W, pad = 820, 40
+    title_font = get_chinese_font(42)
+    star_font = get_chinese_font(32)
+    acc_font = get_chinese_font(24)
+    body_font = get_chinese_font(28)
+
+    def text_w(draw, text, font):
+        try:
+            b = draw.textbbox((0, 0), text, font=font)
+            return b[2] - b[0]
+        except Exception:
+            return len(text) * 20
+
+    def wrap_cjk(text, max_chars=24):
+        text = " ".join(str(text).split())
+        lines, cur = [], ""
+        for ch in text:
+            cur += ch
+            if len(cur) >= max_chars:
+                lines.append(cur); cur = ""
+        if cur:
+            lines.append(cur)
+        return lines or [""]
+
+    blocks = [(_mask_account(acc), wrap_cjk(body)) for acc, body in reviews]
+    top = 170
+    H = top + sum(54 + len(wl) * 40 + 34 for _, wl in blocks) + pad
+
+    img = Image.new("RGB", (W, H), "#FAF8F5")
+    d = ImageDraw.Draw(img)
+    title, stars = "BearJoy 顧客真實好評", "★ ★ ★ ★ ★"
+    d.text(((W - text_w(d, title, title_font)) / 2, 45), title, font=title_font, fill="#4A4238")
+    d.text(((W - text_w(d, stars, star_font)) / 2, 108), stars, font=star_font, fill="#E0A96D")
+
+    y = top
+    for acc, wl in blocks:
+        card_bottom = y + 54 + len(wl) * 40 + 8
+        try:
+            d.rounded_rectangle([pad, y, W - pad, card_bottom], radius=18, fill="#FFFFFF", outline="#E6E2D8", width=2)
+        except Exception:
+            d.rectangle([pad, y, W - pad, card_bottom], fill="#FFFFFF", outline="#E6E2D8")
+        d.text((pad + 26, y + 16), f"@{acc}", font=acc_font, fill="#A0998C")
+        ty = y + 54
+        for line in wl:
+            d.text((pad + 26, ty), line, font=body_font, fill="#4A4238")
+            ty += 40
+        y = card_bottom + 26
+    return img
+
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -366,13 +443,15 @@ if doc:
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs(["✦ 批次評價處理", "✦ VIP 顧客管理"])
+        tab1, tab2, tab3 = st.tabs(["✦ 批次評價處理", "✦ VIP 顧客管理", "✦ 好評洞察 / 素材"])
 
         with tab1:
             col_up, col_res = st.columns([1, 1.5], gap="large")
             with col_up:
                 files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
                 is_vip_check = st.checkbox("🌟 套用 VIP 老客專屬語氣")
+                repurchase_code = st.text_input("🎁 回購優惠碼（選填，會附在私訊結尾）", placeholder="例如 BEARJOY50")
+                repurchase_offer = st.text_input("　└ 優惠說明（選填）", placeholder="例如 全館滿299折20")
                 start_btn = st.button("開始解析並同步")
                 preview_area = st.container()
 
@@ -455,6 +534,10 @@ if doc:
                             rev = res_text.split("[REVIEW]")[1].split("[PUBLIC]")[0].strip() if "[REVIEW]" in res_text else "解析失敗"
                             pub = res_text.split("[PUBLIC]")[1].split("[PRIVATE]")[0].strip() if "[PUBLIC]" in res_text else "解析失敗"
                             priv = res_text.split("[PRIVATE]")[1].strip() if "[PRIVATE]" in res_text else "解析失敗"
+                            # 🎁 功能1：私訊結尾自動附上回購優惠碼，把「感謝」變成「再買一次」
+                            if priv != "解析失敗" and repurchase_code.strip():
+                                offer_txt = f"（{repurchase_offer.strip()}）" if repurchase_offer.strip() else ""
+                                priv = priv + f"\n\nP.S. 送您專屬回購碼 👉 {repurchase_code.strip()}{offer_txt}\n下次下單輸入即可享優惠，期待再為您服務 🎁"
                             now = datetime.now()
                             
                             with cards_container:
@@ -500,8 +583,97 @@ if doc:
                     data = vip_ws.get_all_values()
                     if len(data) > 1: st.dataframe(pd.DataFrame(data[1:], columns=data[0]), use_container_width=True)
                     else: st.info("目前 VIP 名單尚無資料，趕快去解析第一筆評價吧！")
+
+                    # 💤 功能3：沉睡客喚回——找出好久沒回來的老客，一鍵生成喚回訊息
+                    if len(data) > 1:
+                        st.divider()
+                        st.markdown("#### 💤 沉睡客喚回")
+                        st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。喚回舊客成本遠低於找新客！")
+                        days = st.slider("幾天沒互動就算沉睡客?", 7, 180, 30, key="sleep_days")
+                        wb_code = st.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
+                        df_vip = pd.DataFrame(data[1:], columns=data[0])
+                        today = datetime.now()
+                        sleepers = []
+                        for _, r in df_vip.iterrows():
+                            last = str(r.get("最後互動", "")).strip()
+                            try:
+                                gap = (today - datetime.strptime(last, "%Y-%m-%d")).days
+                                if gap >= days:
+                                    sleepers.append((str(r.get("客戶帳號", "")), last, gap))
+                            except Exception:
+                                continue
+                        if sleepers:
+                            sleepers.sort(key=lambda x: -x[2])
+                            st.write(f"共找到 **{len(sleepers)}** 位沉睡客（依沉睡天數排序）：")
+                            coupon_line = f"為感謝您的支持，送上專屬優惠碼 👉 {wb_code.strip()} 🎁\n" if wb_code.strip() else ""
+                            for acc, last, gap in sleepers:
+                                msg = (f"親愛的 {acc}，\n\n"
+                                       f"好久不見了，BearJoy Sharon 一直記得您 🥰\n"
+                                       f"最近上了新品與優惠，特別想第一個和您分享！\n"
+                                       f"{coupon_line}"
+                                       f"期待您再回來逛逛 ❤️\n\n—— BearJoy Sharon")
+                                with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
+                                    st.code(msg, language="text")
+                        else:
+                            st.success("太棒了！目前沒有沉睡客 🎉")
                 except Exception as e:
                     st.error(f"讀取失敗：{e}")
+
+        with tab3:
+            # 📊 功能2：好評關鍵字洞察
+            st.subheader("📊 顧客最愛優點分析")
+            st.caption("從你所有評價紀錄中，統整顧客最常稱讚的優點，直接拿去寫蝦皮標題與賣點。")
+            if st.button("🔍 開始分析顧客最愛優點"):
+                if not api_key:
+                    st.error("需要 API 金鑰才能分析。")
+                else:
+                    try:
+                        hist = get_or_create_ws(doc, "回覆紀錄").get_all_records()
+                        reviews = [str(r.get("原始評價內容", "")).strip() for r in hist
+                                   if str(r.get("原始評價內容", "")).strip() and str(r.get("原始評價內容", "")).strip() != "解析失敗"]
+                        if not reviews:
+                            st.info("目前還沒有評價紀錄可分析，先去處理幾筆好評吧！")
+                        else:
+                            with st.spinner(f"AI 正在分析 {len(reviews)} 筆評價..."):
+                                joined = "\n".join(f"- {r}" for r in reviews[:200])
+                                prompt = (
+                                    "以下是某蝦皮賣場的真實顧客評價。請統整出顧客最常稱讚的「5 個優點」，"
+                                    "用 Markdown 條列，每點格式為：\n"
+                                    "**1. 優點標題** — 簡短說明（附 1 句顧客原話佐證）\n"
+                                    "最後另起一段，以 **🛒 賣點建議：** 開頭，給 2~3 句可直接用在商品標題或描述的文案。\n\n"
+                                    f"顧客評價如下：\n{joined}"
+                                )
+                                result = gemini_generate(api_key, [prompt])
+                            if result:
+                                st.session_state.insight_result = result
+                            else:
+                                st.error("分析失敗，請稍後再試（可能是 AI 額度或網路問題）。")
+                    except Exception as e:
+                        st.error(f"分析失敗：{e}")
+            if st.session_state.get("insight_result"):
+                st.markdown(st.session_state.insight_result)
+
+            # 🖼️ 功能4：一鍵生成顧客好評圖
+            st.divider()
+            st.markdown("#### 🖼️ 一鍵生成「顧客好評圖」")
+            st.caption("挑最新幾筆好評做成漂亮好評圖，放蝦皮置頂或 IG 限動。社會證明能提升新客下單意願。")
+            rev_n = st.slider("要放幾筆好評?", 1, 5, 3, key="rev_img_n")
+            if st.button("✨ 產生好評圖"):
+                try:
+                    hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
+                    rows = [r for r in hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
+                    rows = rows[::-1][:rev_n]
+                    reviews = [(r[1], r[2]) for r in rows]
+                    if not reviews:
+                        st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
+                    else:
+                        card = make_review_card(reviews)
+                        st.image(card, use_container_width=True)
+                        buf = BytesIO(); card.save(buf, format="PNG")
+                        st.download_button("💻 下載好評圖", data=buf.getvalue(),
+                                           file_name="BearJoy_顧客好評圖.png", mime="image/png")
+                except Exception as e:
+                    st.error(f"產生失敗：{e}")
 
     # ==========================================
     # ✨ 動態文字壓印版：折價券管理

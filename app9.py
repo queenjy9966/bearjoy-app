@@ -107,15 +107,15 @@ st.markdown("""
         gap: 6px !important;
         width: 100% !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(1) {
-        flex: 1 1 auto !important;
-        width: 100% !important;
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {
+        flex: 1 1 0 !important;
+        width: auto !important;
         min-width: 0 !important;
         padding: 0 !important;
     }
-    
+
     /* 強制鎖死後三個欄位為 40px (手機手指好按) */
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(n+2) {
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) {
         flex: 0 0 40px !important;
         width: 40px !important;
         min-width: 40px !important;
@@ -132,7 +132,7 @@ st.markdown("""
     }
     
     /* ✨ 完美小正方形操控按鈕 */
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(n+2) div.stButton > button {
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button {
         background: transparent !important;
         border: 1px solid #D0CCC1 !important;
         border-radius: 6px !important;
@@ -146,13 +146,13 @@ st.markdown("""
         margin: 0 !important;
         box-shadow: none !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(n+2) div.stButton > button:hover {
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button:hover {
         background: #E3DFD5 !important; color: #4A4238 !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(4) div.stButton > button {
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(4) div.stButton > button {
         color: #A94442 !important; border-color: #E6C5A8 !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(4) div.stButton > button:hover {
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(4) div.stButton > button:hover {
         background: #F8E3D0 !important;
     }
 
@@ -168,13 +168,13 @@ st.markdown("""
         gap: 8px !important;
         width: 100% !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-txt) > div[data-testid="column"]:nth-child(1) {
-        flex: 1 1 100% !important; 
-        width: 100% !important;
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-txt) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {
+        flex: 1 1 0 !important;
+        width: auto !important;
         min-width: 0 !important;
         padding: 0 !important;
     }
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-txt) > div[data-testid="column"]:nth-child(2) {
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-txt) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) {
         flex: 0 0 45px !important; 
         width: 45px !important; 
         min-width: 45px !important; 
@@ -214,7 +214,7 @@ st.markdown("""
             flex-direction: column !important;
             gap: 0 !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.coupon-grid-anchor) > div[data-testid="column"] {
+        div[data-testid="stHorizontalBlock"]:has(.coupon-grid-anchor) > div:is([data-testid="column"],[data-testid="stColumn"]) {
             flex: 1 1 100% !important;
             width: 100% !important;
             min-width: 100% !important;
@@ -225,7 +225,7 @@ st.markdown("""
             flex-direction: column !important;
             gap: 0 !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.slider-pair-anchor) > div[data-testid="column"] {
+        div[data-testid="stHorizontalBlock"]:has(.slider-pair-anchor) > div:is([data-testid="column"],[data-testid="stColumn"]) {
             flex: 1 1 100% !important;
             width: 100% !important;
             min-width: 100% !important;

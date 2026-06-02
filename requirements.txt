@@ -1,6 +1,7 @@
 streamlit
 google-genai
-gspread
-oauth2client
 pillow
 pandas
+gspread
+oauth2client
+streamlit-image-coordinates

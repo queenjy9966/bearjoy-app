@@ -13,6 +13,13 @@ import urllib.request
 import threading
 import calendar
 
+# 點圖定位元件（沒裝成功就自動退回拉桿，不影響其他功能）
+try:
+    from streamlit_image_coordinates import streamlit_image_coordinates as st_image_coordinates
+    HAS_IMG_COORDS = True
+except Exception:
+    HAS_IMG_COORDS = False
+
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -85,11 +92,11 @@ st.markdown("""
     [data-testid="stImage"] { display: flex; justify-content: center; }
     
     .main-title-box {
-        background: linear-gradient(135deg, #E6E2D8 0%, #F5F3ED 100%); 
-        padding: 12px 15px; border-radius: 6px; text-align: center; margin-bottom: 10px; 
-        box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+        background: #F3F1EA;
+        padding: 14px 15px; border-radius: 8px; text-align: center; margin-bottom: 14px;
+        border: 1px solid #E6E2D8;
     }
-    .main-title-text { color: #4A4238; margin: 0; padding: 0; font-weight: bold; font-size: 22px; letter-spacing: 1px; }
+    .main-title-text { color: #4A4238; margin: 0; padding: 0; font-weight: bold; font-size: 21px; letter-spacing: 1px; }
     .sub-title-text { color: #4A4238; font-weight: bold; font-size: 15px; margin: 0; }
     
     div[data-testid="stFileUploader"] { margin-bottom: -15px !important; margin-top: 5px !important; }
@@ -431,6 +438,52 @@ def make_review_image(reviews, size=(1080, 1080), template="cards"):
     canvas.paste(content_r, ((TW - nw) // 2, (TH - nh) // 2))
     return canvas
 
+def _render_collage(images):
+    """把實際上傳的評價截圖拼成一張內容圖（米底＋標題＋masonry 拼貼）。"""
+    BW, pad, gap = 1000, 45, 24
+    title_font = get_chinese_font(48)
+    star_font = get_chinese_font(34)
+    top = 170
+    cols = 2 if len(images) > 1 else 1
+    cell_w = int((BW - 2 * pad - (cols - 1) * gap) / cols)
+    placed, col_y = [], [top] * cols
+    for im in images:
+        im = im.convert("RGB")
+        sw = cell_w
+        sh = max(1, int(im.height * sw / im.width))
+        c = col_y.index(min(col_y))
+        x = pad + c * (cell_w + gap)
+        y = col_y[c]
+        placed.append((im.resize((sw, sh), Image.LANCZOS), x, y, sw, sh))
+        col_y[c] += sh + gap
+    H = max(col_y) + pad - gap
+    img = Image.new("RGB", (BW, H), "#FAF8F5")
+    d = ImageDraw.Draw(img)
+    title, stars = "BearJoy 顧客真實好評", "★ ★ ★ ★ ★"
+    d.text(((BW - _text_w(d, title, title_font)) / 2, 50), title, font=title_font, fill="#4A4238")
+    d.text(((BW - _text_w(d, stars, star_font)) / 2, 118), stars, font=star_font, fill="#E0A96D")
+    for im, x, y, sw, sh in placed:
+        try:
+            d.rounded_rectangle([x - 3, y - 3, x + sw + 3, y + sh + 3], radius=12, outline="#E6E2D8", width=3)
+        except Exception:
+            d.rectangle([x - 3, y - 3, x + sw + 3, y + sh + 3], outline="#E6E2D8")
+        img.paste(im, (x, y))
+    return img
+
+def make_collage_image(images, size=(1080, 1080)):
+    """把實際截圖拼貼後縮放置中到目標尺寸。"""
+    TW, TH = size
+    content = _render_collage(images)
+    canvas = Image.new("RGB", (TW, TH), "#FAF8F5")
+    margin = int(min(TW, TH) * 0.04)
+    aw, ah = TW - margin * 2, TH - margin * 2
+    scale = aw / content.width
+    if content.height * scale > ah:
+        scale = ah / content.height
+    nw, nh = max(1, int(content.width * scale)), max(1, int(content.height * scale))
+    canvas.paste(content.resize((nw, nh), Image.LANCZOS), ((TW - nw) // 2, (TH - nh) // 2))
+    return canvas
+
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -714,18 +767,23 @@ if doc:
                     if len(data) > 1:
                         st.divider()
                         st.markdown("#### 💤 沉睡客喚回")
-                        st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。喚回舊客成本遠低於找新客！建議 45～90 天較合理，剛買沒多久的客人不算沉睡。")
-                        days = st.number_input("幾天沒互動就算沉睡客?", min_value=14, max_value=365, value=60, step=1, key="sleep_days")
+                        st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。建議 30～90 天；想測試可先把天數設小一點看效果。")
+                        days = st.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
                         wb_code = st.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
-                        df_vip = pd.DataFrame(data[1:], columns=data[0])
+                        header = data[0]
+                        i_acc = header.index("客戶帳號") if "客戶帳號" in header else 0
+                        i_last = header.index("最後互動") if "最後互動" in header else 2
                         today = datetime.now()
-                        sleepers = []
-                        for _, r in df_vip.iterrows():
-                            last = str(r.get("最後互動", "")).strip()
+                        sleepers, parsed = [], 0
+                        for r in data[1:]:
+                            if len(r) <= max(i_acc, i_last):
+                                continue
+                            last = str(r[i_last]).strip()[:10]
                             try:
                                 gap = (today - datetime.strptime(last, "%Y-%m-%d")).days
-                                if gap >= days:
-                                    sleepers.append((str(r.get("客戶帳號", "")), last, gap))
+                                parsed += 1
+                                if gap >= int(days):
+                                    sleepers.append((str(r[i_acc]), last, gap))
                             except Exception:
                                 continue
                         if sleepers:
@@ -740,8 +798,10 @@ if doc:
                                        f"期待您再回來逛逛 ❤️\n\n—— BearJoy Sharon")
                                 with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
                                     st.code(msg, language="text")
+                        elif parsed == 0:
+                            st.warning("讀不到「最後互動」日期，請確認 VIP名單 的日期格式為 2026-06-02。")
                         else:
-                            st.success("太棒了！目前沒有沉睡客 🎉")
+                            st.success(f"已檢查 {parsed} 位顧客，目前沒有超過 {int(days)} 天沒互動的沉睡客 🎉")
                 except Exception as e:
                     st.error(f"讀取失敗：{e}")
 
@@ -782,10 +842,14 @@ if doc:
             # 🖼️ 功能4：一鍵生成顧客好評圖（多尺寸、兩種版型）
             st.divider()
             st.markdown("#### 🖼️ 一鍵生成「顧客好評圖」")
-            st.caption("挑最新幾筆好評做成漂亮好評圖，放蝦皮置頂、IG、FB、TikTok、LINE 等。社會證明能提升新客下單意願。")
+            st.caption("放蝦皮置頂、IG、FB、TikTok、LINE 等，提升新客下單信任感。")
             c_n, c_tpl = st.columns(2)
             rev_n = c_n.number_input("要放幾筆好評?", min_value=1, max_value=12, value=3, step=1, key="rev_img_n")
-            template_label = c_tpl.selectbox("版型", ["版型A：好評卡片牆", "版型B：大字引用感"], key="rev_tpl")
+            template_label = c_tpl.selectbox("版型", [
+                "版型A：真實截圖拼接（用你上傳的評價圖）",
+                "版型B：文字精選卡",
+                "版型C：大字引用感",
+            ], key="rev_tpl")
             SIZE_PRESETS = {
                 "正方形 1:1（IG貼文 / 蝦皮 1080×1080）": (1080, 1080),
                 "直式 9:16（IG/FB限動・TikTok・Reels 1080×1920）": (1080, 1920),
@@ -800,19 +864,38 @@ if doc:
                 cust_w = cw.number_input("寬 (px)", 300, 4000, 1080, 20, key="rev_cw")
                 cust_h = ch.number_input("高 (px)", 300, 4000, 1080, 20, key="rev_ch")
                 target_size = (int(cust_w), int(cust_h))
-            if st.button("✨ 產生好評圖"):
+            if st.button("✨ 產生好評圖", type="primary"):
                 try:
-                    hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
-                    rows = [r for r in hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
-                    rows = rows[::-1][:int(rev_n)]
-                    reviews = [(r[1], r[2]) for r in rows]
-                    if not reviews:
-                        st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
+                    card = None
+                    if template_label.startswith("版型A"):
+                        # 版型A：用實際上傳的評價截圖拼接
+                        mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
+                        mat = [r for r in mat if len(r) > 1 and r[0]]
+                        mat = mat[::-1][:int(rev_n)]
+                        imgs = []
+                        for r in mat:
+                            try:
+                                imgs.append(base64_chunks_to_img([c for c in r[1:] if c]))
+                            except Exception:
+                                continue
+                        if not imgs:
+                            st.info("還沒有已保存的評價截圖。請先到「批次評價處理」勾選『保存原始評價截圖』並處理幾筆，再回來生成。")
+                        else:
+                            card = make_collage_image(imgs, size=target_size)
                     else:
-                        tpl = "quote" if template_label.startswith("版型B") else "cards"
-                        card = make_review_image(reviews, size=target_size, template=tpl)
+                        # 版型B/C：用 AI 解析後的文字做圖
+                        hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
+                        rows = [r for r in hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
+                        rows = rows[::-1][:int(rev_n)]
+                        reviews = [(r[1], r[2]) for r in rows]
+                        if not reviews:
+                            st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
+                        else:
+                            tpl = "quote" if template_label.startswith("版型C") else "cards"
+                            card = make_review_image(reviews, size=target_size, template=tpl)
+                    if card is not None:
                         st.image(card, use_container_width=True)
-                        st.caption("💡 手機版：可直接「長按上方圖片」儲存，或按下方按鈕下載到手機。")
+                        st.caption("💡 手機：長按上方圖片即可儲存，或按下方按鈕下載到手機。")
                         buf = BytesIO(); card.save(buf, format="PNG")
                         st.download_button("💻 下載好評圖", data=buf.getvalue(),
                                            file_name=f"BearJoy_好評圖_{target_size[0]}x{target_size[1]}.png", mime="image/png")
@@ -930,9 +1013,21 @@ if doc:
                 
                 if new_file:
                     base_img = Image.open(new_file)
-                
+                    # 直接上傳、不需編輯：一鍵存原圖
+                    if st.button("✅ 直接儲存原圖（不加字）", type="primary", use_container_width=True, key=f"save_raw_{slot_id}"):
+                        with st.spinner("儲存中..."):
+                            chunks = img_to_base64_chunks(base_img.convert("RGB"))
+                            rows_to_del = [i + 1 for i, r in enumerate(cfg_data) if r and r[0] == f"coupon_{slot_id}"]
+                            if rows_to_del:
+                                for ri in sorted(rows_to_del, reverse=True):
+                                    ws_cfg.delete_rows(ri)
+                            ws_cfg.append_row([f"coupon_{slot_id}"] + chunks)
+                            st.session_state.refresh_cfg = True
+                            st.success("已儲存！")
+                            st.rerun()
+
                 if base_img:
-                    with st.expander(f"✨ 開啟壓印控制台", expanded=bool(new_file)):
+                    with st.expander("✏️ 想加日期/文字再點開（不需要可略過）", expanded=False):
                         if not new_file:
                             st.caption("⚠️ 目前使用的是舊圖，建議上傳「乾淨空白底圖」再重新壓印字體。")
                         
@@ -971,11 +1066,16 @@ if doc:
                             font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
                             rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
 
-                            c_x, c_y = st.columns(2)
-                            c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                            x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
-                            y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
-                            
+                            # 📍 位置來源：有元件就「點圖定位」，沒有就退回拉桿
+                            if HAS_IMG_COORDS:
+                                x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
+                                y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
+                            else:
+                                c_x, c_y = st.columns(2)
+                                c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
+                                y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
+
                             preview_img = base_img.copy().convert("RGBA")
                             font = get_chinese_font(font_size)
                             
@@ -1004,8 +1104,21 @@ if doc:
                             preview_img.alpha_composite(rotated_txt, (paste_x, paste_y))
                             final_img_to_save = preview_img.convert("RGB")
                             
-                            st.markdown("**👇 壓印即時預覽:**")
-                            st.image(final_img_to_save, width=300) 
+                            if HAS_IMG_COORDS:
+                                st.markdown("**👇 預覽：手機可直接「點一下圖片」把文字移到該處（免拉桿）**")
+                                disp_w = 320
+                                disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))
+                                clicked = st_image_coordinates(disp_img, key=f"clk_{slot_id}")
+                                if clicked:
+                                    ratio = base_img.width / disp_w
+                                    nx, ny = int(clicked["x"] * ratio), int(clicked["y"] * ratio)
+                                    if nx != x_pos or ny != y_pos:
+                                        st.session_state[f"px_{slot_id}"] = nx
+                                        st.session_state[f"py_{slot_id}"] = ny
+                                        st.rerun()
+                            else:
+                                st.markdown("**👇 壓印即時預覽:**")
+                                st.image(final_img_to_save, width=300)
                         else:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)

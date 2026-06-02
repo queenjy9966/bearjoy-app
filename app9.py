@@ -264,8 +264,8 @@ def get_or_create_ws(doc, title):
 
 def img_to_base64_chunks(img):
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    # ✨ 畫質升級：解析度拉高至 1800，確保文字銳利度
-    img.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+    # ✨ 畫質升級：解析度拉高至 2400，確保文字銳利度
+    img.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
     buffered = BytesIO()
     # ✨ 畫質升級：使用最高品質 100 儲存
     img.save(buffered, format="JPEG", quality=100, subsampling=0)
@@ -275,6 +275,24 @@ def img_to_base64_chunks(img):
 def base64_chunks_to_img(chunks):
     b64_str = "".join(chunks)
     return Image.open(BytesIO(base64.b64decode(b64_str)))
+
+def img_to_chunks_compact(img, maxpx=1280, quality=80):
+    """素材用：較小檔的 base64 切塊，避免雲端肥大。"""
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    img.thumbnail((maxpx, maxpx), Image.Resampling.LANCZOS)
+    buffered = BytesIO()
+    img.save(buffered, format="JPEG", quality=quality)
+    b64 = base64.b64encode(buffered.getvalue()).decode()
+    return [b64[i:i + 45000] for i in range(0, len(b64), 45000)]
+
+def _save_kv(ws, key, value):
+    """在工作表第一欄找 key：有就更新第二欄，沒有就新增一列（即時讀取，安全）。"""
+    col = ws.col_values(1)
+    if key in col:
+        ws.update_cell(col.index(key) + 1, 2, value)
+    else:
+        ws.append_row([key, value])
 
 # ==========================================
 # ✨ 銷售加值工具：AI 分析、好評圖
@@ -302,56 +320,116 @@ def _mask_account(acc):
         return acc[:1] + "*"
     return acc[0] + "*" * (len(acc) - 2) + acc[-1]
 
-def make_review_card(reviews):
-    """把 [(帳號, 評價內容), ...] 排成一張好評圖，回傳 PIL Image。"""
-    W, pad = 820, 40
-    title_font = get_chinese_font(42)
-    star_font = get_chinese_font(32)
-    acc_font = get_chinese_font(24)
-    body_font = get_chinese_font(28)
+def _clean_text(s):
+    """只保留中文、英數、常用標點，移除 emoji / 符號 / 亂碼方框。"""
+    out = []
+    for ch in str(s):
+        o = ord(ch)
+        if ch in "\n\t ":
+            out.append(ch)
+        elif 0x20 <= o <= 0x7E:
+            out.append(ch)
+        elif 0x2018 <= o <= 0x201F:
+            out.append(ch)
+        elif 0x3000 <= o <= 0x303F:
+            out.append(ch)
+        elif 0x3400 <= o <= 0x4DBF:
+            out.append(ch)
+        elif 0x4E00 <= o <= 0x9FFF:
+            out.append(ch)
+        elif 0xFF00 <= o <= 0xFFEF:
+            out.append(ch)
+    return "".join(out).strip()
 
-    def text_w(draw, text, font):
-        try:
-            b = draw.textbbox((0, 0), text, font=font)
-            return b[2] - b[0]
-        except Exception:
-            return len(text) * 20
+def _wrap_cjk(text, max_chars):
+    text = " ".join(_clean_text(text).split())
+    lines, cur = [], ""
+    for ch in text:
+        cur += ch
+        if len(cur) >= max_chars:
+            lines.append(cur); cur = ""
+    if cur:
+        lines.append(cur)
+    return lines or [""]
 
-    def wrap_cjk(text, max_chars=24):
-        text = " ".join(str(text).split())
-        lines, cur = [], ""
-        for ch in text:
-            cur += ch
-            if len(cur) >= max_chars:
-                lines.append(cur); cur = ""
-        if cur:
-            lines.append(cur)
-        return lines or [""]
+def _text_w(draw, text, font):
+    try:
+        b = draw.textbbox((0, 0), text, font=font)
+        return b[2] - b[0]
+    except Exception:
+        return len(text) * 20
 
-    blocks = [(_mask_account(acc), wrap_cjk(body)) for acc, body in reviews]
-    top = 170
-    H = top + sum(54 + len(wl) * 40 + 34 for _, wl in blocks) + pad
+def _render_content(reviews, template):
+    """回傳一張內容圖（米底），之後再縮放置中到目標尺寸。"""
+    BW, pad = 1000, 50
+    if template == "quote":
+        title_font = get_chinese_font(52)
+        body_font = get_chinese_font(40)
+        acc_font = get_chinese_font(30)
+        star_font = get_chinese_font(34)
+        quote_font = get_chinese_font(120)
+        blocks = [(_mask_account(a), _wrap_cjk(b, 20)) for a, b in reviews]
+        top = 150
+        H = top + sum(70 + len(wl) * 56 + 110 for _, wl in blocks) + pad
+        img = Image.new("RGB", (BW, H), "#FAF8F5")
+        d = ImageDraw.Draw(img)
+        t = "顧客真實心得"
+        d.text(((BW - _text_w(d, t, title_font)) / 2, 50), t, font=title_font, fill="#4A4238")
+        y = top
+        for acc, wl in blocks:
+            d.text((pad, y - 30), "“", font=quote_font, fill="#D8CFBE")
+            ty = y + 60
+            for line in wl:
+                d.text(((BW - _text_w(d, line, body_font)) / 2, ty), line, font=body_font, fill="#4A4238")
+                ty += 56
+            stars = "★ ★ ★ ★ ★"
+            d.text(((BW - _text_w(d, stars, star_font)) / 2, ty + 6), stars, font=star_font, fill="#E0A96D")
+            acc_t = f"—— @{acc}"
+            d.text(((BW - _text_w(d, acc_t, acc_font)) / 2, ty + 50), acc_t, font=acc_font, fill="#A0998C")
+            y = ty + 110
+        return img
+    else:
+        title_font = get_chinese_font(50)
+        star_font = get_chinese_font(38)
+        acc_font = get_chinese_font(28)
+        body_font = get_chinese_font(34)
+        blocks = [(_mask_account(a), _wrap_cjk(b, 26)) for a, b in reviews]
+        top = 200
+        H = top + sum(64 + len(wl) * 48 + 40 for _, wl in blocks) + pad
+        img = Image.new("RGB", (BW, H), "#FAF8F5")
+        d = ImageDraw.Draw(img)
+        title, stars = "BearJoy 顧客真實好評", "★ ★ ★ ★ ★"
+        d.text(((BW - _text_w(d, title, title_font)) / 2, 55), title, font=title_font, fill="#4A4238")
+        d.text(((BW - _text_w(d, stars, star_font)) / 2, 125), stars, font=star_font, fill="#E0A96D")
+        y = top
+        for acc, wl in blocks:
+            cb = y + 64 + len(wl) * 48 + 10
+            try:
+                d.rounded_rectangle([pad, y, BW - pad, cb], radius=22, fill="#FFFFFF", outline="#E6E2D8", width=2)
+            except Exception:
+                d.rectangle([pad, y, BW - pad, cb], fill="#FFFFFF", outline="#E6E2D8")
+            d.text((pad + 30, y + 18), f"@{acc}", font=acc_font, fill="#A0998C")
+            ty = y + 64
+            for line in wl:
+                d.text((pad + 30, ty), line, font=body_font, fill="#4A4238")
+                ty += 48
+            y = cb + 32
+        return img
 
-    img = Image.new("RGB", (W, H), "#FAF8F5")
-    d = ImageDraw.Draw(img)
-    title, stars = "BearJoy 顧客真實好評", "★ ★ ★ ★ ★"
-    d.text(((W - text_w(d, title, title_font)) / 2, 45), title, font=title_font, fill="#4A4238")
-    d.text(((W - text_w(d, stars, star_font)) / 2, 108), stars, font=star_font, fill="#E0A96D")
-
-    y = top
-    for acc, wl in blocks:
-        card_bottom = y + 54 + len(wl) * 40 + 8
-        try:
-            d.rounded_rectangle([pad, y, W - pad, card_bottom], radius=18, fill="#FFFFFF", outline="#E6E2D8", width=2)
-        except Exception:
-            d.rectangle([pad, y, W - pad, card_bottom], fill="#FFFFFF", outline="#E6E2D8")
-        d.text((pad + 26, y + 16), f"@{acc}", font=acc_font, fill="#A0998C")
-        ty = y + 54
-        for line in wl:
-            d.text((pad + 26, ty), line, font=body_font, fill="#4A4238")
-            ty += 40
-        y = card_bottom + 26
-    return img
+def make_review_image(reviews, size=(1080, 1080), template="cards"):
+    """reviews: [(帳號, 內容), ...]；回傳指定尺寸 (W,H) 的 PIL Image。"""
+    TW, TH = size
+    content = _render_content(reviews, template)
+    canvas = Image.new("RGB", (TW, TH), "#FAF8F5")
+    margin = int(min(TW, TH) * 0.04)
+    avail_w, avail_h = TW - margin * 2, TH - margin * 2
+    scale = avail_w / content.width
+    if content.height * scale > avail_h:
+        scale = avail_h / content.height
+    nw, nh = max(1, int(content.width * scale)), max(1, int(content.height * scale))
+    content_r = content.resize((nw, nh), Image.LANCZOS)
+    canvas.paste(content_r, ((TW - nw) // 2, (TH - nh) // 2))
+    return canvas
 
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
@@ -450,8 +528,30 @@ if doc:
             with col_up:
                 files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
                 is_vip_check = st.checkbox("🌟 套用 VIP 老客專屬語氣")
-                repurchase_code = st.text_input("🎁 回購優惠碼（選填，會附在私訊結尾）", placeholder="例如 BEARJOY50")
-                repurchase_offer = st.text_input("　└ 優惠說明（選填）", placeholder="例如 全館滿299折20")
+                # 🎁 功能1：讀取上次儲存的回購碼範例（存在「系統設定」工作表）
+                if "saved_repurchase" not in st.session_state:
+                    try:
+                        cfg_rows = get_or_create_ws(doc, "系統設定").get_all_values()
+                        rc = next((r for r in cfg_rows if r and r[0] == "repurchase_code"), None)
+                        ro = next((r for r in cfg_rows if r and r[0] == "repurchase_offer"), None)
+                        st.session_state.saved_repurchase = (rc[1] if rc and len(rc) > 1 else "",
+                                                             ro[1] if ro and len(ro) > 1 else "")
+                    except Exception:
+                        st.session_state.saved_repurchase = ("", "")
+                _saved_code, _saved_offer = st.session_state.saved_repurchase
+                repurchase_code = st.text_input("🎁 回購優惠碼（選填，會附在私訊結尾）", value=_saved_code, placeholder="例如 BEARJOY50")
+                repurchase_offer = st.text_input("　└ 優惠說明（選填）", value=_saved_offer, placeholder="例如 全館滿299折20")
+                if st.button("💾 把目前回購碼設為預設範例"):
+                    try:
+                        cfg_ws = get_or_create_ws(doc, "系統設定")
+                        _save_kv(cfg_ws, "repurchase_code", repurchase_code.strip())
+                        _save_kv(cfg_ws, "repurchase_offer", repurchase_offer.strip())
+                        st.session_state.saved_repurchase = (repurchase_code.strip(), repurchase_offer.strip())
+                        st.success("已儲存為預設，下次打開會自動帶入 ✅")
+                    except Exception as e:
+                        st.error(f"儲存失敗：{e}")
+                save_screenshots = st.checkbox("💾 同時保存原始評價截圖（供日後做素材）", value=True,
+                                               help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
                 start_btn = st.button("開始解析並同步")
                 preview_area = st.container()
 
@@ -539,6 +639,14 @@ if doc:
                                 offer_txt = f"（{repurchase_offer.strip()}）" if repurchase_offer.strip() else ""
                                 priv = priv + f"\n\nP.S. 送您專屬回購碼 👉 {repurchase_code.strip()}{offer_txt}\n下次下單輸入即可享優惠，期待再為您服務 🎁"
                             now = datetime.now()
+
+                            # 💾 功能6：保存原始評價截圖到雲端，供日後做素材
+                            if save_screenshots:
+                                try:
+                                    ws_mat = get_or_create_ws(doc, "評價截圖素材")
+                                    ws_mat.append_row([f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}"] + img_to_chunks_compact(img.copy()))
+                                except Exception:
+                                    pass
                             
                             with cards_container:
                                 with st.expander(f"✨ 客戶帳號：{acc}", expanded=True):
@@ -554,24 +662,42 @@ if doc:
                     if doc and results_to_cloud:
                         try:
                             ws_history = get_or_create_ws(doc, "回覆紀錄")
-                            if len(ws_history.get_all_values()) == 0: ws_history.append_row(["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"])
-                            ws_history.append_rows(results_to_cloud)
-                            
+                            existing = ws_history.get_all_values()
+                            if len(existing) == 0:
+                                header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"]
+                                ws_history.append_row(header)
+                                existing = [header]
+                            # 🔁 功能5：用 (帳號, 評價內容) 去重，同一筆評價不重複計算
+                            seen_pairs = set((str(r[1]).strip(), str(r[2]).strip()) for r in existing[1:] if len(r) > 2)
+                            new_rows, dup_count = [], 0
+                            for row in results_to_cloud:
+                                pair = (str(row[1]).strip(), str(row[2]).strip())
+                                if pair in seen_pairs:
+                                    dup_count += 1
+                                    continue
+                                seen_pairs.add(pair)
+                                new_rows.append(row)
+                            if new_rows:
+                                ws_history.append_rows(new_rows)
+
                             ws_vip = get_or_create_ws(doc, "VIP名單")
                             if len(ws_vip.get_all_values()) == 0: ws_vip.append_row(["客戶帳號", "首次互動", "最後互動", "互動次數"])
                             vip_records = ws_vip.get_all_records()
                             date_str = datetime.now().strftime("%Y-%m-%d")
-                            
-                            for row in results_to_cloud:
-                                account = row[1] 
+
+                            for row in new_rows:
+                                account = row[1]
                                 if account == "未知": continue
                                 found_index = next((i for i, r in enumerate(vip_records) if str(r.get('客戶帳號', '')) == account), -1)
                                 if found_index != -1:
-                                    ws_vip.update_cell(found_index + 2, 3, date_str) 
+                                    ws_vip.update_cell(found_index + 2, 3, date_str)
                                     ws_vip.update_cell(found_index + 2, 4, int(vip_records[found_index].get('互動次數', 0)) + 1)
                                 else:
                                     ws_vip.append_row([account, date_str, date_str, 1])
-                            top_success_msg.success(f"🎉 完美同步！已將 {len(results_to_cloud)} 筆紀錄更新至雲端資料庫。")
+                            msg = f"🎉 完美同步！新增 {len(new_rows)} 筆紀錄"
+                            if dup_count:
+                                msg += f"（已自動略過 {dup_count} 筆重複評價，不重複計算互動次數）"
+                            top_success_msg.success(msg)
                         except Exception as e:
                             st.error(f"雲端同步失敗：請確認試算表格式是否正確。({e})")
 
@@ -588,8 +714,8 @@ if doc:
                     if len(data) > 1:
                         st.divider()
                         st.markdown("#### 💤 沉睡客喚回")
-                        st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。喚回舊客成本遠低於找新客！")
-                        days = st.slider("幾天沒互動就算沉睡客?", 7, 180, 30, key="sleep_days")
+                        st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。喚回舊客成本遠低於找新客！建議 45～90 天較合理，剛買沒多久的客人不算沉睡。")
+                        days = st.number_input("幾天沒互動就算沉睡客?", min_value=14, max_value=365, value=60, step=1, key="sleep_days")
                         wb_code = st.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
                         df_vip = pd.DataFrame(data[1:], columns=data[0])
                         today = datetime.now()
@@ -653,25 +779,43 @@ if doc:
             if st.session_state.get("insight_result"):
                 st.markdown(st.session_state.insight_result)
 
-            # 🖼️ 功能4：一鍵生成顧客好評圖
+            # 🖼️ 功能4：一鍵生成顧客好評圖（多尺寸、兩種版型）
             st.divider()
             st.markdown("#### 🖼️ 一鍵生成「顧客好評圖」")
-            st.caption("挑最新幾筆好評做成漂亮好評圖，放蝦皮置頂或 IG 限動。社會證明能提升新客下單意願。")
-            rev_n = st.slider("要放幾筆好評?", 1, 5, 3, key="rev_img_n")
+            st.caption("挑最新幾筆好評做成漂亮好評圖，放蝦皮置頂、IG、FB、TikTok、LINE 等。社會證明能提升新客下單意願。")
+            c_n, c_tpl = st.columns(2)
+            rev_n = c_n.number_input("要放幾筆好評?", min_value=1, max_value=12, value=3, step=1, key="rev_img_n")
+            template_label = c_tpl.selectbox("版型", ["版型A：好評卡片牆", "版型B：大字引用感"], key="rev_tpl")
+            SIZE_PRESETS = {
+                "正方形 1:1（IG貼文 / 蝦皮 1080×1080）": (1080, 1080),
+                "直式 9:16（IG/FB限動・TikTok・Reels 1080×1920）": (1080, 1920),
+                "橫式（FB貼文 1200×630）": (1200, 630),
+                "LINE 圖文（1040×1040）": (1040, 1040),
+                "自訂尺寸…": None,
+            }
+            size_label = st.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
+            target_size = SIZE_PRESETS[size_label]
+            if target_size is None:
+                cw, ch = st.columns(2)
+                cust_w = cw.number_input("寬 (px)", 300, 4000, 1080, 20, key="rev_cw")
+                cust_h = ch.number_input("高 (px)", 300, 4000, 1080, 20, key="rev_ch")
+                target_size = (int(cust_w), int(cust_h))
             if st.button("✨ 產生好評圖"):
                 try:
                     hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
                     rows = [r for r in hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
-                    rows = rows[::-1][:rev_n]
+                    rows = rows[::-1][:int(rev_n)]
                     reviews = [(r[1], r[2]) for r in rows]
                     if not reviews:
                         st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
                     else:
-                        card = make_review_card(reviews)
+                        tpl = "quote" if template_label.startswith("版型B") else "cards"
+                        card = make_review_image(reviews, size=target_size, template=tpl)
                         st.image(card, use_container_width=True)
+                        st.caption("💡 手機版：可直接「長按上方圖片」儲存，或按下方按鈕下載到手機。")
                         buf = BytesIO(); card.save(buf, format="PNG")
                         st.download_button("💻 下載好評圖", data=buf.getvalue(),
-                                           file_name="BearJoy_顧客好評圖.png", mime="image/png")
+                                           file_name=f"BearJoy_好評圖_{target_size[0]}x{target_size[1]}.png", mime="image/png")
                 except Exception as e:
                     st.error(f"產生失敗：{e}")
 
@@ -796,24 +940,41 @@ if doc:
                         final_img_to_save = base_img 
                         
                         if enable_text:
+                            # 📅 功能3：讀取此版位上次存的壓印位置，換日期就不用再喬位置
+                            sv_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None)
+                            sv = {}
+                            if sv_row and len(sv_row) > 1:
+                                try:
+                                    p = sv_row[1].split("|")
+                                    sv = {"x": int(float(p[0])), "y": int(float(p[1])),
+                                          "size": int(float(p[2])), "rot": int(float(p[3])), "color": p[4]}
+                                except Exception:
+                                    sv = {}
+                            def_size = max(10, min(sv.get("size", 50), 200))
+                            def_rot = max(-180, min(sv.get("rot", 0), 180))
+                            def_color = sv.get("color", "#FFFFFF")
+                            def_x = max(0, min(sv.get("x", base_img.width // 2), base_img.width))
+                            def_y = max(0, min(sv.get("y", int(base_img.height * 0.7)), base_img.height))
+                            st.caption("💡 換日期超簡單：直接改下方「壓印文字」的日期 → 按儲存即可，位置/大小/顏色會自動記住。")
+
                             # ✨ 錨點魔法 2：文字方框與顏色並排
-                            c_txt, c_col = st.columns(2) 
+                            c_txt, c_col = st.columns(2)
                             with c_txt:
                                 # 埋入隱形錨點供 CSS 辨識
                                 st.markdown('<span class="inline-row-txt" style="display:none;"></span>', unsafe_allow_html=True)
-                                text_input = st.text_area("✍️ 壓印文字", value=default_coupon_txt, key=f"txt_{slot_id}")
+                                text_input = st.text_area("✍️ 壓印文字（日期）", value=default_coupon_txt, key=f"txt_{slot_id}")
                             with c_col:
-                                text_color = st.color_picker("🎨 顏色", "#FFFFFF", key=f"col_{slot_id}")
-                            
+                                text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
+
                             c_sz, c_rot = st.columns(2)
                             c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                            font_size = c_sz.slider("📐 大小", 10, 200, 50, key=f"sz_{slot_id}")
-                            rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, 0, key=f"rot_{slot_id}")
+                            font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
+                            rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
 
                             c_x, c_y = st.columns(2)
                             c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                            x_pos = c_x.slider("↔️ 左右", 0, base_img.width, base_img.width//2, key=f"x_{slot_id}")
-                            y_pos = c_y.slider("↕️ 上下", 0, base_img.height, int(base_img.height*0.7), key=f"y_{slot_id}")
+                            x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
+                            y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
                             
                             preview_img = base_img.copy().convert("RGBA")
                             font = get_chinese_font(font_size)
@@ -859,7 +1020,10 @@ if doc:
                                     for row_index in sorted(rows_to_del, reverse=True):
                                         ws_cfg.delete_rows(row_index)
                                 ws_cfg.append_row(row_data)
-                                
+                                # 📅 功能3：一併記住壓印位置（下次換日期免重喬）
+                                if enable_text:
+                                    _save_kv(ws_cfg, f"coupset_{slot_id}", f"{x_pos}|{y_pos}|{font_size}|{rotation_angle}|{text_color}")
+
                                 st.session_state.refresh_cfg = True
                                 st.success("更新成功！")
                                 st.rerun()

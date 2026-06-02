@@ -114,19 +114,19 @@ st.markdown("""
         padding: 0 !important;
     }
     
-    /* 強制鎖死後三個欄位為 32px */
+    /* 強制鎖死後三個欄位為 40px (手機手指好按) */
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div[data-testid="column"]:nth-child(n+2) {
-        flex: 0 0 32px !important;
-        width: 32px !important;
-        min-width: 32px !important;
-        max-width: 32px !important;
+        flex: 0 0 40px !important;
+        width: 40px !important;
+        min-width: 40px !important;
+        max-width: 40px !important;
         padding: 0 !important;
     }
     
     /* 下載按鈕的精準對齊 */
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) .stDownloadButton { margin: 0 !important; width: 100% !important;}
-    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) .stDownloadButton button { 
-        height: 32px !important; min-height: 32px !important; padding: 0 10px !important; 
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) .stDownloadButton button {
+        height: 40px !important; min-height: 40px !important; padding: 0 10px !important;
         width: 100% !important; margin: 0 !important; font-size: 14px !important;
         display: flex !important; align-items: center !important; justify-content: center !important;
     }
@@ -137,11 +137,11 @@ st.markdown("""
         border: 1px solid #D0CCC1 !important;
         border-radius: 6px !important;
         color: #798571 !important;
-        font-size: 16px !important;
+        font-size: 19px !important;
         font-weight: bold !important;
         padding: 0 !important;
-        width: 32px !important; min-width: 32px !important; max-width: 32px !important;
-        height: 32px !important; min-height: 32px !important; max-height: 32px !important;
+        width: 40px !important; min-width: 40px !important; max-width: 40px !important;
+        height: 40px !important; min-height: 40px !important; max-height: 40px !important;
         display: flex !important; justify-content: center !important; align-items: center !important;
         margin: 0 !important;
         box-shadow: none !important;
@@ -204,6 +204,34 @@ st.markdown("""
         color: #798571 !important; white-space: nowrap !important;
     }
     div[data-testid="stSlider"] > div { flex: 1 1 auto !important; }
+
+    /* ========================================================= */
+    /* ✨ 手機優化：折價券改單欄全寬，按鈕排才不會被擠到跑版 */
+    /* ========================================================= */
+    @media (max-width: 820px) {
+        /* 折價券左右兩欄 → 改成上下單欄，每張券吃滿整個螢幕寬 */
+        div[data-testid="stHorizontalBlock"]:has(.coupon-grid-anchor) {
+            flex-direction: column !important;
+            gap: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.coupon-grid-anchor) > div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+        }
+        /* 大小/旋轉、左右/上下 這幾組拉桿在手機上也改成單欄，比較好拖 */
+        div[data-testid="stHorizontalBlock"]:has(.slider-pair-anchor) {
+            flex-direction: column !important;
+            gap: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.slider-pair-anchor) > div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -306,6 +334,26 @@ with st.sidebar:
                 
         if err:
             st.markdown(f"<p style='color:#A94442; font-weight:bold; font-size:14px; text-align:center;'>⚠️ 連線失敗: {err}</p>", unsafe_allow_html=True)
+
+    # 💡 使用小提醒：休眠與「保持清醒」說明（給未來的自己看）
+    st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+    with st.expander("💡 開啟太慢 / 看到休眠畫面?點我"):
+        st.markdown("""
+**為什麼有時要等一下下?**
+本系統用的是免費雲端,超過約 **7 天**沒人開會自動「休眠」。再打開時要按一下「喚醒」、等 30 秒～1 分鐘,這是**正常現象,不是當機**。
+
+**想要每次秒開(常用時再開)**
+到 **cron-job.org** 把「保持 BearJoy 客服清醒」這個任務的開關切 **ON**,它會定時戳網址讓系統不睡。不常用時再切 **OFF** 即可。
+
+**⭐ 正確開啟順序(很重要)**
+1. 先用手機打開本網頁、按「喚醒」讓它醒著
+2. **再**去 cron-job.org 把開關切 ON
+3. (pinger 只能維持清醒,叫不醒睡著的,所以要先喚醒)
+
+**小提醒**
+cron-job.org 左邊的方框是「選取框」,**不是開關**!要開/關請點該任務的 **EDIT → Enabled** 切換後存檔。
+        """)
+        st.caption("建議間隔:每 6 小時或每天 1 次就夠,又省又不會休眠。")
 
 # ==========================================
 # 5. 主功能區
@@ -512,6 +560,8 @@ if doc:
             display_idx += 1
                 
             with current_col:
+                # 埋入隱形錨點：讓 CSS 在手機上把左右兩欄改成上下單欄
+                st.markdown('<span class="coupon-grid-anchor" style="display:none;"></span>', unsafe_allow_html=True)
                 st.markdown(f"<p class='sub-title-text' style='margin-bottom:5px;'>🎟️ 折價券版位 {display_num}</p>", unsafe_allow_html=True)
                 
                 base_img = None
@@ -537,7 +587,7 @@ if doc:
                         base_img.save(buf, format="PNG")
                         st.download_button(label=f"💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
                     else:
-                        st.markdown("<div style='height:32px;'></div>", unsafe_allow_html=True)
+                        st.markdown("<div style='height:40px;'></div>", unsafe_allow_html=True)
                 with c_up:
                     if st.button("↑", key=f"up_btn_{slot_id}", disabled=is_first):
                         st.session_state.active_slots[idx], st.session_state.active_slots[idx-1] = st.session_state.active_slots[idx-1], st.session_state.active_slots[idx]
@@ -584,10 +634,12 @@ if doc:
                                 text_color = st.color_picker("🎨 顏色", "#FFFFFF", key=f"col_{slot_id}")
                             
                             c_sz, c_rot = st.columns(2)
+                            c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
                             font_size = c_sz.slider("📐 大小", 10, 200, 50, key=f"sz_{slot_id}")
                             rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, 0, key=f"rot_{slot_id}")
-                            
+
                             c_x, c_y = st.columns(2)
+                            c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
                             x_pos = c_x.slider("↔️ 左右", 0, base_img.width, base_img.width//2, key=f"x_{slot_id}")
                             y_pos = c_y.slider("↕️ 上下", 0, base_img.height, int(base_img.height*0.7), key=f"y_{slot_id}")
                             

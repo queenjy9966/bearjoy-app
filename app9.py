@@ -20,6 +20,13 @@ try:
 except Exception:
     HAS_IMG_COORDS = False
 
+# ✨ 畫布拖曳元件：可「即時拖曳、看著文字滑動軌跡」定位（沒裝成功就退回上面的點圖／拉桿）
+try:
+    from streamlit_drawable_canvas import st_canvas
+    HAS_CANVAS = True
+except Exception:
+    HAS_CANVAS = False
+
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -85,19 +92,36 @@ st.set_page_config(page_title="BearJoy 智能客服", page_icon="✦", layout="w
 st.markdown("""
 <style>
     .stApp { background-color: #FAF8F5; }
-    .block-container { padding-top: 2.5rem !important; padding-bottom: 1rem !important; }
-    
+    .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; max-width: 1100px; }
+
+    /* ✨ 字級層次：大標 → 中標 → 小標 → 註解小字，一眼分得出輕重 */
+    /* ✨ 小標統一：所有區塊標題同一大小、同一左側細色條（與 VIP 顧客戰情室一致，前面不放 emoji 圖案） */
+    h1, h2, h3, h4, h5, h6 { font-size: 16.5px !important; line-height: 1.35 !important; margin: 0.35rem 0 0.3rem 0 !important; color: #4A4238 !important; font-weight: 700 !important; letter-spacing: 0.3px !important; }
+    h3, h4, h5, h6 { border-left: 3px solid #B7A98C !important; padding-left: 9px !important; }
+    [data-testid="stMarkdownContainer"] p { margin-bottom: 0.35rem !important; line-height: 1.5 !important; color: #4A4238 !important; }
+    /* 註解小字：說明性文字，灰、小、不搶眼 */
+    [data-testid="stCaptionContainer"] { font-size: 11.5px !important; color: #A39C90 !important; line-height: 1.4 !important; }
+    hr { margin: 0.7rem 0 !important; border-color: #E6E2D8 !important; }
+    [data-testid="stVerticalBlock"] { gap: 0.55rem !important; }
+    /* 分頁籤縮小、清爽，選中態更明顯 */
+    [data-testid="stTabs"] button[role="tab"] { font-size: 14px !important; padding: 7px 14px !important; font-weight: 600 !important; }
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: #4A4238 !important; font-weight: 700 !important; }
+
     [data-testid="stSidebar"] { background-color: #F0EDE5 !important; }
     .stButton>button { background-color: #798571 !important; color: white !important; border-radius: 6px !important; }
     [data-testid="stImage"] { display: flex; justify-content: center; }
-    
+    /* ✨ 勾選框文字一排不換行（VIP語氣／保存截圖） */
+    [data-testid="stCheckbox"] label { white-space: nowrap !important; }
+    [data-testid="stCheckbox"] label p { white-space: nowrap !important; font-size: 13.5px !important; margin: 0 !important; }
+
     .main-title-box {
-        background: #F3F1EA;
-        padding: 14px 15px; border-radius: 8px; text-align: center; margin-bottom: 14px;
-        border: 1px solid #E6E2D8;
+        background: #EFEBE2;
+        padding: 20px 22px; border-radius: 10px; margin: 0 0 16px 0;
+        border: 1px solid #DED8CC; box-sizing: border-box; width: 100%; overflow: visible;
+        display: flex; align-items: center; justify-content: center; min-height: 70px;
     }
-    .main-title-text { color: #4A4238; margin: 0; padding: 0; font-weight: bold; font-size: 21px; letter-spacing: 1px; }
-    .sub-title-text { color: #4A4238; font-weight: bold; font-size: 15px; margin: 0; }
+    .main-title-text { color: #4A4238 !important; margin: 0 !important; padding: 0 !important; font-weight: bold !important; font-size: 23px !important; letter-spacing: 1px !important; line-height: 1.5 !important; border: none !important; text-align: center !important; }
+    .sub-title-text { color: #4A4238; font-weight: bold; font-size: 14px; margin: 0; }
     
     div[data-testid="stFileUploader"] { margin-bottom: -15px !important; margin-top: 5px !important; }
     div[data-testid="stExpander"] { margin-bottom: 5px !important; }
@@ -110,8 +134,9 @@ st.markdown("""
         flex-direction: row !important;
         flex-wrap: nowrap !important;
         align-items: center !important;
-        margin-bottom: 5px !important;
-        gap: 6px !important;
+        margin-top: 2px !important;
+        margin-bottom: 6px !important;
+        gap: 8px !important;
         width: 100% !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(1) {
@@ -138,13 +163,13 @@ st.markdown("""
         display: flex !important; align-items: center !important; justify-content: center !important;
     }
     
-    /* ✨ 完美小正方形操控按鈕 */
+    /* ✨ 小正方形操控按鈕：統一底色塊＋白字，尺寸一致、文字置中 */
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button {
-        background: transparent !important;
-        border: 1px solid #D0CCC1 !important;
+        background: #798571 !important;
+        border: none !important;
         border-radius: 6px !important;
-        color: #798571 !important;
-        font-size: 19px !important;
+        color: #FFFFFF !important;
+        font-size: 18px !important;
         font-weight: bold !important;
         padding: 0 !important;
         width: 40px !important; min-width: 40px !important; max-width: 40px !important;
@@ -154,13 +179,32 @@ st.markdown("""
         box-shadow: none !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button:hover {
-        background: #E3DFD5 !important; color: #4A4238 !important;
+        background: #687560 !important; color: #FFFFFF !important;
     }
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button:disabled {
+        background: #C9C4B8 !important; color: #FFFFFF !important;
+    }
+    /* ✨ 三鍵大地色系（每個版位都一致）：↑上移＝卡其、↓下移＝大地綠、✕刪除＝大地紅，白字 */
+    /* ↑ 上移：卡其 */
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) div.stButton > button {
+        background: #A38F5A !important; color: #FFFFFF !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) div.stButton > button:hover {
+        background: #8E7C4C !important;
+    }
+    /* ↓ 下移：大地綠 */
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(3) div.stButton > button {
+        background: #798571 !important; color: #FFFFFF !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(3) div.stButton > button:hover {
+        background: #687560 !important;
+    }
+    /* ✕ 刪除：大地紅 */
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(4) div.stButton > button {
-        color: #A94442 !important; border-color: #E6C5A8 !important;
+        background: #B0746A !important; color: #FFFFFF !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(4) div.stButton > button:hover {
-        background: #F8E3D0 !important;
+        background: #9C6359 !important;
     }
 
     /* ========================================================= */
@@ -239,31 +283,111 @@ st.markdown("""
             max-width: 100% !important;
         }
     }
+
+    /* ========================================================= */
+    /* ✨ 新增：按鈕統一大小 + 折價券版位色塊區隔 */
+    /* ========================================================= */
+    /* ✨ 按鈕統一規格：底色塊（綠）、白字、固定高度、文字置中（折價券小方塊鍵有自己的規則，不受影響） */
+    .stButton > button, .stDownloadButton > button {
+        background-color: #798571 !important; color: #FFFFFF !important;
+        border: none !important; border-radius: 6px !important;
+        height: 42px !important; min-height: 42px !important;
+        /* ✨ 全站按鈕寬度一致：固定 240px；空間不足時最多撐滿容器，不會破版 */
+        width: 240px !important; max-width: 100% !important;
+        font-size: 14px !important; font-weight: 600 !important;
+        padding: 0 16px !important;
+        display: inline-flex !important; align-items: center !important; justify-content: center !important;
+        text-align: center !important; line-height: 1.2 !important;
+        box-shadow: none !important;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background-color: #687560 !important; color: #FFFFFF !important;
+    }
+    .stButton > button:disabled {
+        background-color: #C9C4B8 !important; color: #FFFFFF !important;
+    }
+    /* ✨ 按鈕內所有文字一律白色、置中（含 Streamlit 把文字包進 <p>/<span> 的情況） */
+    .stButton > button *, .stDownloadButton > button * { color: #FFFFFF !important; }
+    .stButton > button p, .stDownloadButton > button p,
+    .stButton > button div, .stDownloadButton > button div {
+        margin: 0 !important; text-align: center !important;
+        width: 100% !important; display: flex !important;
+        align-items: center !important; justify-content: center !important;
+    }
+    /* 折價券那一排的下載鍵維持原欄寬，不被上面的限制縮短 */
+    div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) .stDownloadButton > button {
+        max-width: none !important;
+    }
+    /* ✨ 折價券：每個版位包成米色卡片，清楚分辨哪些按鈕屬於哪個版位 */
+    div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) {
+        background: #F5F3EC !important;
+        border: 1px solid #E6E2D8 !important;
+        border-radius: 12px !important;
+        padding: 14px !important;
+        overflow: visible !important;
+    }
+    /* ✨ 折疊區（expander）：邊框完整呈現、不被卡片邊緣截掉（含「✏️ 想加日期/文字」） */
+    div[data-testid="stExpander"] { overflow: visible !important; margin-top: 8px !important; }
+    div[data-testid="stExpander"] > details {
+        border: 1px solid #E0DBD0 !important; border-radius: 8px !important;
+        background: #FFFFFF !important; overflow: visible !important;
+    }
+    div[data-testid="stExpander"] > details > summary { border-radius: 8px !important; }
+    /* ✨ 側邊欄折疊標題（💡 開啟太慢…）：字縮小、強制一排不換行、文字在方框內上下置中 */
+    [data-testid="stSidebar"] div[data-testid="stExpander"] > details > summary {
+        display: flex !important; align-items: center !important; min-height: 40px !important;
+    }
+    [data-testid="stSidebar"] div[data-testid="stExpander"] summary p {
+        font-size: 12px !important; white-space: nowrap !important;
+        overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important;
+        display: flex !important; align-items: center !important;
+    }
+    /* ✨ 側邊欄折疊內文：整區（含粗體標題、條列數字 1/2/3）統一同一字級、同樣行距，不雜亂 */
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] li,
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] ol,
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] ul,
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] strong {
+        font-size: 11.5px !important; line-height: 1.5 !important; color: #4A4238 !important;
+    }
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
+        margin-bottom: 0.45rem !important;
+    }
+    [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] ol {
+        margin: 0 0 0.45rem 0 !important; padding-left: 1.1rem !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
 # 3. 雲端引擎與【無損高畫質儲存技術】
 # ==========================================
-def connect_google_sheets(url):
+@st.cache_resource(show_spinner=False)
+def _open_sheet_cached(url):
+    """✨ 速度優化：成功的連線會被快取,之後每次互動都直接重用,不再重新登入金鑰、
+    重新打開試算表(這是操作卡頓的主因)。失敗時丟出例外→不快取,下次互動會自動重試。"""
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = None
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = None
-        try:
-            if "type" in st.secrets:
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets), scope)
-        except Exception: pass
-            
-        if not creds:
-            key_path = os.path.join(os.path.dirname(__file__), "google_key.json")
-            if os.path.exists(key_path):
-                creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
-        
-        if creds:
-            gc = gspread.authorize(creds)
-            return gc.open_by_url(url), "成功"
-    except Exception as e: return None, str(e)
-    return None, "找不到金鑰"
+        if "type" in st.secrets:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets), scope)
+    except Exception:
+        pass
+    if not creds:
+        key_path = os.path.join(os.path.dirname(__file__), "google_key.json")
+        if os.path.exists(key_path):
+            creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
+    if not creds:
+        raise RuntimeError("找不到金鑰")
+    gc = gspread.authorize(creds)
+    return gc.open_by_url(url)
+
+def connect_google_sheets(url):
+    """對外介面不變,維持回傳 (doc, 訊息);底層改用上方快取連線。"""
+    try:
+        return _open_sheet_cached(url), "成功"
+    except Exception as e:
+        return None, str(e)
 
 def get_or_create_ws(doc, title):
     try: return doc.worksheet(title)
@@ -301,24 +425,55 @@ def _save_kv(ws, key, value):
     else:
         ws.append_row([key, value])
 
+def write_df_to_sheet(doc, title, df):
+    """把整份 DataFrame 覆蓋寫入指定 Google Sheet 工作表（沒有就新建），回傳該工作表網址。
+    讓沉睡客名單、顧客優點分析也能像 VIP名單一樣，直接在雲端 Google Sheet 的新分頁查看／下載 Excel。"""
+    ws = get_or_create_ws(doc, title)
+    ws.clear()
+    rows = [list(map(str, df.columns))] + df.astype(str).values.tolist()
+    ws.append_rows(rows, value_input_option="RAW")
+    try:
+        return f"{doc.url}#gid={ws.id}"
+    except Exception:
+        return None
+
 # ==========================================
 # ✨ 銷售加值工具：AI 分析、好評圖
 # ==========================================
-def gemini_generate(api_key, contents):
-    """呼叫 Gemini，自動換模型重試；失敗回傳 None。"""
+def gemini_generate(api_key, contents, models=None):
+    """呼叫 Gemini，自動換模型重試；失敗回傳 None。
+    ✨ 速度優化：第一次嘗試不再空等 2 秒，只有「失敗要重試」時才退避等待
+    （等待時間隨次數加長，避免觸發免費版流量限制）。
+    contents 可為純文字 [prompt]，也可為圖文 [prompt, img]，批次處理共用同一套邏輯。"""
     try:
         client = genai.Client(api_key=api_key)
     except Exception:
         return None
-    for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
-        for _ in range(3):
+    models = models or ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    first = True
+    for model_name in models:
+        for attempt in range(3):
             try:
-                time.sleep(2)
+                if not first:
+                    time.sleep(2 + attempt * 2)  # 退避：第 0/1/2 次重試分別等 2/4/6 秒
+                first = False
                 resp = client.models.generate_content(model=model_name, contents=contents)
                 return resp.text
             except Exception:
                 continue
     return None
+
+
+def _extract_section(text, start_tag, end_tags):
+    """從 AI 回覆中安全擷取某段落，找不到標籤回傳 None（取代易出錯的多重 split）。"""
+    if not text or start_tag not in text:
+        return None
+    seg = text.split(start_tag, 1)[1]
+    for et in end_tags:
+        if et in seg:
+            seg = seg.split(et, 1)[0]
+            break
+    return seg.strip()
 
 def _mask_account(acc):
     """遮罩客戶帳號中間字元，保護隱私（公開貼圖用）。"""
@@ -367,61 +522,61 @@ def _text_w(draw, text, font):
         return len(text) * 20
 
 def _render_content(reviews, template):
-    """回傳一張內容圖（米底），之後再縮放置中到目標尺寸。"""
+    """回傳一張內容圖（米底），之後再縮放置中到目標尺寸。
+    ✨ 每則評價：左上角放 ★★★★★ 與帳號，下方為內文（左對齊）。
+    ✨ 卡片高度改用『實際量測的文字高度』決定，文字一定包在框內、不會超出。"""
     BW, pad = 1000, 50
-    if template == "quote":
-        title_font = get_chinese_font(52)
-        body_font = get_chinese_font(40)
-        acc_font = get_chinese_font(30)
-        star_font = get_chinese_font(34)
-        quote_font = get_chinese_font(120)
-        blocks = [(_mask_account(a), _wrap_cjk(b, 20)) for a, b in reviews]
-        top = 150
-        H = top + sum(70 + len(wl) * 56 + 110 for _, wl in blocks) + pad
-        img = Image.new("RGB", (BW, H), "#FAF8F5")
-        d = ImageDraw.Draw(img)
-        t = "顧客真實心得"
-        d.text(((BW - _text_w(d, t, title_font)) / 2, 50), t, font=title_font, fill="#4A4238")
-        y = top
-        for acc, wl in blocks:
-            d.text((pad, y - 30), "“", font=quote_font, fill="#D8CFBE")
-            ty = y + 60
-            for line in wl:
-                d.text(((BW - _text_w(d, line, body_font)) / 2, ty), line, font=body_font, fill="#4A4238")
-                ty += 56
-            stars = "★ ★ ★ ★ ★"
-            d.text(((BW - _text_w(d, stars, star_font)) / 2, ty + 6), stars, font=star_font, fill="#E0A96D")
-            acc_t = f"—— @{acc}"
-            d.text(((BW - _text_w(d, acc_t, acc_font)) / 2, ty + 50), acc_t, font=acc_font, fill="#A0998C")
-            y = ty + 110
-        return img
-    else:
-        title_font = get_chinese_font(50)
-        star_font = get_chinese_font(38)
-        acc_font = get_chinese_font(28)
-        body_font = get_chinese_font(34)
-        blocks = [(_mask_account(a), _wrap_cjk(b, 26)) for a, b in reviews]
-        top = 200
-        H = top + sum(64 + len(wl) * 48 + 40 for _, wl in blocks) + pad
-        img = Image.new("RGB", (BW, H), "#FAF8F5")
-        d = ImageDraw.Draw(img)
-        title, stars = "BearJoy 顧客真實好評", "★ ★ ★ ★ ★"
-        d.text(((BW - _text_w(d, title, title_font)) / 2, 55), title, font=title_font, fill="#4A4238")
-        d.text(((BW - _text_w(d, stars, star_font)) / 2, 125), stars, font=star_font, fill="#E0A96D")
-        y = top
-        for acc, wl in blocks:
-            cb = y + 64 + len(wl) * 48 + 10
+    stars = "★ ★ ★ ★ ★"
+    is_quote = (template == "quote")
+    dummy = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+    title_font = get_chinese_font(52 if is_quote else 50)
+    body_font = get_chinese_font(40 if is_quote else 34)
+    acc_font = get_chinese_font(28)
+    star_font = get_chinese_font(30)
+
+    line_gap = 12          # 內文行距
+    inner = 36             # 卡片左右內留白
+    pads_v = 28            # 卡片上下內留白
+    head_h = 78            # 星星列＋帳號列 高度
+    gap_between = 30       # 卡片之間距
+    max_chars = 18 if is_quote else 22
+
+    blocks = [(_mask_account(a), "\n".join(_wrap_cjk(b, max_chars))) for a, b in reviews]
+
+    def measure_h(text, font):
+        try:
+            bb = dummy.multiline_textbbox((0, 0), text, font=font, spacing=line_gap)
+            return bb[3] - bb[1]
+        except Exception:
+            return (text.count("\n") + 1) * (body_font.size + line_gap if hasattr(body_font, "size") else 50)
+
+    heights = [pads_v + head_h + measure_h(body, body_font) + pads_v for _, body in blocks]
+
+    title = "顧客真實心得" if is_quote else "BearJoy 顧客真實好評"
+    top = 150
+    H = top + sum(h + gap_between for h in heights) + pad
+    img = Image.new("RGB", (BW, H), "#FAF8F5")
+    d = ImageDraw.Draw(img)
+    d.text(((BW - _text_w(d, title, title_font)) / 2, 55), title, font=title_font, fill="#4A4238")
+
+    y = top
+    for (acc, body), h in zip(blocks, heights):
+        cb = y + h
+        if not is_quote:
             try:
                 d.rounded_rectangle([pad, y, BW - pad, cb], radius=22, fill="#FFFFFF", outline="#E6E2D8", width=2)
             except Exception:
                 d.rectangle([pad, y, BW - pad, cb], fill="#FFFFFF", outline="#E6E2D8")
-            d.text((pad + 30, y + 18), f"@{acc}", font=acc_font, fill="#A0998C")
-            ty = y + 64
-            for line in wl:
-                d.text((pad + 30, ty), line, font=body_font, fill="#4A4238")
-                ty += 48
-            y = cb + 32
-        return img
+        x0 = pad + inner
+        ty = y + pads_v
+        # 左上角：星星 + 帳號
+        d.text((x0, ty), stars, font=star_font, fill="#E0A96D")
+        d.text((x0, ty + 40), f"@{acc}", font=acc_font, fill="#A0998C")
+        # 內文（左對齊、實測高度，不會超出框）
+        d.multiline_text((x0, ty + head_h), body, font=body_font, fill="#4A4238", spacing=line_gap)
+        y = cb + gap_between
+    return img
 
 def make_review_image(reviews, size=(1080, 1080), template="cards"):
     """reviews: [(帳號, 內容), ...]；回傳指定尺寸 (W,H) 的 PIL Image。"""
@@ -484,6 +639,20 @@ def make_collage_image(images, size=(1080, 1080)):
     canvas.paste(content.resize((nw, nh), Image.LANCZOS), ((TW - nw) // 2, (TH - nh) // 2))
     return canvas
 
+def _draw_marker(img, x, y):
+    """在預覽圖畫紅色十字準心，標出文字中心點。只用於畫面預覽，不會存進實際檔案。
+    拉動「左右 / 上下」拉桿時，這個十字會即時跟著移動，方便對準想要的位置。"""
+    im = img.convert("RGB").copy()
+    d = ImageDraw.Draw(im)
+    r = max(16, int(min(im.width, im.height) * 0.04))
+    # 先畫白色粗框（深色底圖也看得見），再疊紅色細線
+    d.line([(x - r, y), (x + r, y)], fill="#FFFFFF", width=6)
+    d.line([(x, y - r), (x, y + r)], fill="#FFFFFF", width=6)
+    d.line([(x - r, y), (x + r, y)], fill="#E0533D", width=2)
+    d.line([(x, y - r), (x, y + r)], fill="#E0533D", width=2)
+    d.ellipse([x - 5, y - 5, x + 5, y + 5], outline="#E0533D", width=2)
+    return im
+
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -545,23 +714,23 @@ with st.sidebar:
 
     # 💡 使用小提醒：休眠與「保持清醒」說明（給未來的自己看）
     st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
-    with st.expander("💡 開啟太慢 / 看到休眠畫面?點我"):
+    with st.expander("💡 開啟太慢/休眠畫面?"):
         st.markdown("""
-**為什麼有時要等一下下?**
-本系統用的是免費雲端,超過約 **7 天**沒人開會自動「休眠」。再打開時要按一下「喚醒」、等 30 秒～1 分鐘,這是**正常現象,不是當機**。
+**為什麼要等一下?**
+免費雲端超過約 7 天沒人開會自動休眠。再開時按「喚醒」等 30 秒～1 分鐘即可,屬正常現象、不是當機。
 
-**想要每次秒開(常用時再開)**
-到 **cron-job.org** 把「保持 BearJoy 客服清醒」這個任務的開關切 **ON**,它會定時戳網址讓系統不睡。不常用時再切 **OFF** 即可。
+**想每次秒開**
+到 cron-job.org 把「保持 BearJoy 客服清醒」開關切 ON,定時戳網址讓系統不睡;不常用再切 OFF。
 
-**⭐ 正確開啟順序(很重要)**
-1. 先用手機打開本網頁、按「喚醒」讓它醒著
-2. **再**去 cron-job.org 把開關切 ON
-3. (pinger 只能維持清醒,叫不醒睡著的,所以要先喚醒)
+**正確開啟順序**
+1. 先用手機開本頁、按「喚醒」
+2. 再去 cron-job.org 切 ON
+3. pinger 只能維持清醒、叫不醒睡著的
 
 **小提醒**
-cron-job.org 左邊的方框是「選取框」,**不是開關**!要開/關請點該任務的 **EDIT → Enabled** 切換後存檔。
+左邊方框是「選取框」不是開關。開關請點 EDIT → Enabled 切換後存檔。
         """)
-        st.caption("建議間隔:每 6 小時或每天 1 次就夠,又省又不會休眠。")
+        st.markdown("**建議間隔:每 6 小時或每天 1 次就夠,又省又不休眠。**")
 
 # ==========================================
 # 5. 主功能區
@@ -570,18 +739,24 @@ if doc:
     if menu == "智能客服系統":
         st.markdown("""
         <div class="main-title-box">
-            <h2 class="main-title-text">✦ BearJoy 智能客服系統 ✦</h2>
+            <div class="main-title-text">✦ BearJoy 智能客服系統 ✦</div>
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2, tab3 = st.tabs(["✦ 批次評價處理", "✦ VIP 顧客管理", "✦ 好評洞察 / 素材"])
+        tab1, tab2, tab3 = st.tabs(["批次評價處理", "VIP 顧客管理", "好評洞察 / 素材"])
 
         with tab1:
             col_up, col_res = st.columns([1, 1.5], gap="large")
             with col_up:
-                files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
-                is_vip_check = st.checkbox("🌟 套用 VIP 老客專屬語氣")
-                # 🎁 功能1：讀取上次儲存的回購碼範例（存在「系統設定」工作表）
+                st.markdown("##### ① 上傳好評截圖")
+                files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
+
+                st.markdown("##### ② 回覆設定")
+                cck1, cck2 = st.columns(2)
+                is_vip_check = cck1.checkbox("🌟 回購語氣")
+                save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
+                                                 help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
+                # 🎁 功能1：回購優惠碼設定收進摺疊區，平時不佔版面、要用再展開
                 if "saved_repurchase" not in st.session_state:
                     try:
                         cfg_rows = get_or_create_ws(doc, "系統設定").get_all_values()
@@ -592,20 +767,21 @@ if doc:
                     except Exception:
                         st.session_state.saved_repurchase = ("", "")
                 _saved_code, _saved_offer = st.session_state.saved_repurchase
-                repurchase_code = st.text_input("🎁 回購優惠碼（選填，會附在私訊結尾）", value=_saved_code, placeholder="例如 BEARJOY50")
-                repurchase_offer = st.text_input("　└ 優惠說明（選填）", value=_saved_offer, placeholder="例如 全館滿299折20")
-                if st.button("💾 把目前回購碼設為預設範例"):
-                    try:
-                        cfg_ws = get_or_create_ws(doc, "系統設定")
-                        _save_kv(cfg_ws, "repurchase_code", repurchase_code.strip())
-                        _save_kv(cfg_ws, "repurchase_offer", repurchase_offer.strip())
-                        st.session_state.saved_repurchase = (repurchase_code.strip(), repurchase_offer.strip())
-                        st.success("已儲存為預設，下次打開會自動帶入 ✅")
-                    except Exception as e:
-                        st.error(f"儲存失敗：{e}")
-                save_screenshots = st.checkbox("💾 同時保存原始評價截圖（供日後做素材）", value=True,
-                                               help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
-                start_btn = st.button("開始解析並同步")
+                with st.expander("🎁 回購優惠碼（選填，會附在私訊結尾）", expanded=bool(_saved_code)):
+                    repurchase_code = st.text_input("回購優惠碼", value=_saved_code, placeholder="例如 BEARJOY50")
+                    repurchase_offer = st.text_input("優惠說明", value=_saved_offer, placeholder="例如 全館滿299折20")
+                    if st.button("💾 設為預設範例", use_container_width=True):
+                        try:
+                            cfg_ws = get_or_create_ws(doc, "系統設定")
+                            _save_kv(cfg_ws, "repurchase_code", repurchase_code.strip())
+                            _save_kv(cfg_ws, "repurchase_offer", repurchase_offer.strip())
+                            st.session_state.saved_repurchase = (repurchase_code.strip(), repurchase_offer.strip())
+                            st.success("已儲存為預設，下次打開會自動帶入 ✅")
+                        except Exception as e:
+                            st.error(f"儲存失敗：{e}")
+
+                st.markdown("##### ③ 開始處理")
+                start_btn = st.button("🚀 開始解析並同步", type="primary", use_container_width=True)
                 preview_area = st.container()
 
             with col_res:
@@ -614,8 +790,7 @@ if doc:
                 
                 if start_btn and files and api_key:
                     results_to_cloud = []
-                    client = genai.Client(api_key=api_key)
-                    
+
                     system_prompt = """
                     你是一個專業的蝦皮賣場客服主管 Sharon。請精準辨識圖片中的 [ACCOUNT] 帳號與 [REVIEW] 內容。
                     
@@ -659,34 +834,28 @@ if doc:
                     (私訊回覆)
                     """
                     
-                    for file in files:
+                    for file_idx, file in enumerate(files):
                         with preview_area:
                              img = Image.open(file)
-                             st.image(img, caption=f"處理中: {file.name}", width=300) 
-                        
+                             st.image(img, caption=f"處理中: {file.name}", width=300)
+
                         with st.spinner(f"🏃‍♀️ AI 正在為您撰寫..."):
-                            success = False
                             current_prompt = system_prompt + ("\n注意：此為二回購老客，請加入朋友般的尊榮感。" if is_vip_check else "")
-                            models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"] 
-                            for model_name in models_to_try:
-                                if success: break
-                                for attempt in range(4):
-                                    try:
-                                        time.sleep(3) 
-                                        response = client.models.generate_content(model=model_name, contents=[current_prompt, img])
-                                        res_text = response.text
-                                        success = True
-                                        break 
-                                    except Exception: continue 
-                            
-                            if not success:
+                            # ✨ 速度優化：第一張立即處理，之後每張間隔 4 秒，避免免費版流量限制；
+                            # 重試/退避邏輯統一交給 gemini_generate()，不再每次嘗試前都空等 3 秒。
+                            if file_idx > 0:
+                                time.sleep(4)
+                            res_text = gemini_generate(api_key, [current_prompt, img])
+
+                            if not res_text:
                                 st.error(f"檔案 {file.name} 處理失敗。")
-                                continue 
-                            
-                            acc = res_text.split("[ACCOUNT]")[1].split("[REVIEW]")[0].strip() if "[ACCOUNT]" in res_text else "未知"
-                            rev = res_text.split("[REVIEW]")[1].split("[PUBLIC]")[0].strip() if "[REVIEW]" in res_text else "解析失敗"
-                            pub = res_text.split("[PUBLIC]")[1].split("[PRIVATE]")[0].strip() if "[PUBLIC]" in res_text else "解析失敗"
-                            priv = res_text.split("[PRIVATE]")[1].strip() if "[PRIVATE]" in res_text else "解析失敗"
+                                continue
+
+                            # ✨ 穩定性：用安全解析，AI 少打一個標籤也不會整個崩潰
+                            acc = _extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]) or "未知"
+                            rev = _extract_section(res_text, "[REVIEW]", ["[PUBLIC]"]) or "解析失敗"
+                            pub = _extract_section(res_text, "[PUBLIC]", ["[PRIVATE]"]) or "解析失敗"
+                            priv = _extract_section(res_text, "[PRIVATE]", []) or "解析失敗"
                             # 🎁 功能1：私訊結尾自動附上回購優惠碼，把「感謝」變成「再買一次」
                             if priv != "解析失敗" and repurchase_code.strip():
                                 offer_txt = f"（{repurchase_offer.strip()}）" if repurchase_offer.strip() else ""
@@ -698,8 +867,8 @@ if doc:
                                 try:
                                     ws_mat = get_or_create_ws(doc, "評價截圖素材")
                                     ws_mat.append_row([f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}"] + img_to_chunks_compact(img.copy()))
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    st.caption(f"⚠️ 此筆截圖素材保存略過（不影響回覆）：{e}")
                             
                             with cards_container:
                                 with st.expander(f"✨ 客戶帳號：{acc}", expanded=True):
@@ -710,7 +879,6 @@ if doc:
                                     st.code(priv, language="text")
                             
                             results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv])
-                            time.sleep(5)
 
                     if doc and results_to_cloud:
                         try:
@@ -734,8 +902,15 @@ if doc:
                                 ws_history.append_rows(new_rows)
 
                             ws_vip = get_or_create_ws(doc, "VIP名單")
-                            if len(ws_vip.get_all_values()) == 0: ws_vip.append_row(["客戶帳號", "首次互動", "最後互動", "互動次數"])
-                            vip_records = ws_vip.get_all_records()
+                            # ✨ 速度優化：原本對 VIP 名單讀了兩次（get_all_values + get_all_records），
+                            # 改成只讀一次再自行組成紀錄，少一趟雲端來回。
+                            vip_vals = ws_vip.get_all_values()
+                            if len(vip_vals) == 0:
+                                v_header = ["客戶帳號", "首次互動", "最後互動", "互動次數"]
+                                ws_vip.append_row(v_header)
+                                vip_vals = [v_header]
+                            v_header = vip_vals[0]
+                            vip_records = [dict(zip(v_header, r)) for r in vip_vals[1:]]
                             date_str = datetime.now().strftime("%Y-%m-%d")
 
                             for row in new_rows:
@@ -760,13 +935,16 @@ if doc:
                 try:
                     vip_ws = get_or_create_ws(doc, "VIP名單")
                     data = vip_ws.get_all_values()
-                    if len(data) > 1: st.dataframe(pd.DataFrame(data[1:], columns=data[0]), use_container_width=True)
+                    if len(data) > 1:
+                        st.caption(f"目前共 {len(data) - 1} 位 VIP 顧客　·　最多顯示 5 筆，其餘用表格右側滾輪查看")
+                        # ✨ 固定高度＝表頭＋5 列：最多呈現 5 筆，其餘在框內用右側滾輪捲動，不會把整頁撐長
+                        st.dataframe(pd.DataFrame(data[1:], columns=data[0]), use_container_width=True, height=213)
                     else: st.info("目前 VIP 名單尚無資料，趕快去解析第一筆評價吧！")
 
                     # 💤 功能3：沉睡客喚回——找出好久沒回來的老客，一鍵生成喚回訊息
                     if len(data) > 1:
                         st.divider()
-                        st.markdown("#### 💤 沉睡客喚回")
+                        st.markdown("#### 沉睡客喚回")
                         st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。建議 30～90 天；想測試可先把天數設小一點看效果。")
                         days = st.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
                         wb_code = st.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
@@ -790,14 +968,46 @@ if doc:
                             sleepers.sort(key=lambda x: -x[2])
                             st.write(f"共找到 **{len(sleepers)}** 位沉睡客（依沉睡天數排序）：")
                             coupon_line = f"為感謝您的支持，送上專屬優惠碼 👉 {wb_code.strip()} 🎁\n" if wb_code.strip() else ""
+
+                            def _wakeback_msg(acc):
+                                return (f"親愛的 {acc}，\n\n"
+                                        f"好久不見了，BearJoy Sharon 一直記得您 🥰\n"
+                                        f"最近上了新品與優惠，特別想第一個和您分享！\n"
+                                        f"{coupon_line}"
+                                        f"期待您再回來逛逛 ❤️\n\n—— BearJoy Sharon")
+
+                            # 📥 下載沉睡客名單 Excel（含帳號、最後互動、沉睡天數、可直接複製的喚回訊息）
+                            try:
+                                df_sleep = pd.DataFrame(
+                                    [{"客戶帳號": acc, "最後互動日期": last, "已沉睡天數": gap,
+                                      "喚回訊息": _wakeback_msg(acc)} for acc, last, gap in sleepers])
+                                xbuf = BytesIO()
+                                with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
+                                    df_sleep.to_excel(writer, index=False, sheet_name="沉睡客名單")
+                                cdl1, cdl2 = st.columns(2)
+                                with cdl1:
+                                    st.download_button(
+                                        "📥 下載 Excel",
+                                        data=xbuf.getvalue(),
+                                        file_name=f"BearJoy_沉睡客名單_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        use_container_width=True)
+                                with cdl2:
+                                    if st.button("☁️ 同步到雲端", use_container_width=True, key="sleep_cloud"):
+                                        try:
+                                            with st.spinner("寫入雲端中…"):
+                                                link = write_df_to_sheet(doc, "沉睡客名單", df_sleep)
+                                            st.success("已寫入雲端 Google Sheet「沉睡客名單」分頁 ✅")
+                                            if link:
+                                                st.markdown(f"[👉 點此開啟雲端名單]({link})")
+                                        except Exception as e:
+                                            st.error(f"雲端同步失敗：{e}")
+                            except Exception as e:
+                                st.caption(f"⚠️ Excel 名單產生失敗（不影響下方訊息）：{e}")
+
                             for acc, last, gap in sleepers:
-                                msg = (f"親愛的 {acc}，\n\n"
-                                       f"好久不見了，BearJoy Sharon 一直記得您 🥰\n"
-                                       f"最近上了新品與優惠，特別想第一個和您分享！\n"
-                                       f"{coupon_line}"
-                                       f"期待您再回來逛逛 ❤️\n\n—— BearJoy Sharon")
                                 with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
-                                    st.code(msg, language="text")
+                                    st.code(_wakeback_msg(acc), language="text")
                         elif parsed == 0:
                             st.warning("讀不到「最後互動」日期，請確認 VIP名單 的日期格式為 2026-06-02。")
                         else:
@@ -807,7 +1017,7 @@ if doc:
 
         with tab3:
             # 📊 功能2：好評關鍵字洞察
-            st.subheader("📊 顧客最愛優點分析")
+            st.subheader("顧客最愛優點分析")
             st.caption("從你所有評價紀錄中，統整顧客最常稱讚的優點，直接拿去寫蝦皮標題與賣點。")
             if st.button("🔍 開始分析顧客最愛優點"):
                 if not api_key:
@@ -838,10 +1048,36 @@ if doc:
                         st.error(f"分析失敗：{e}")
             if st.session_state.get("insight_result"):
                 st.markdown(st.session_state.insight_result)
+                _ins_lines = [ln.rstrip() for ln in str(st.session_state.insight_result).splitlines() if ln.strip()]
+                df_insight = pd.DataFrame({"顧客最愛優點分析": _ins_lines})
+                cin1, cin2 = st.columns(2)
+                with cin1:
+                    try:
+                        ibuf = BytesIO()
+                        with pd.ExcelWriter(ibuf, engine="openpyxl") as writer:
+                            df_insight.to_excel(writer, index=False, sheet_name="顧客優點分析")
+                        st.download_button(
+                            "📥 下載 Excel",
+                            data=ibuf.getvalue(),
+                            file_name=f"BearJoy_顧客優點分析_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True)
+                    except Exception as e:
+                        st.caption(f"⚠️ Excel 產生失敗：{e}")
+                with cin2:
+                    if st.button("☁️ 同步到雲端", use_container_width=True, key="insight_cloud"):
+                        try:
+                            with st.spinner("寫入雲端中…"):
+                                link = write_df_to_sheet(doc, "顧客優點分析", df_insight)
+                            st.success("已寫入雲端 Google Sheet「顧客優點分析」分頁 ✅")
+                            if link:
+                                st.markdown(f"[👉 點此開啟雲端分析]({link})")
+                        except Exception as e:
+                            st.error(f"雲端同步失敗：{e}")
 
             # 🖼️ 功能4：一鍵生成顧客好評圖（多尺寸、兩種版型）
             st.divider()
-            st.markdown("#### 🖼️ 一鍵生成「顧客好評圖」")
+            st.markdown("#### 一鍵生成「顧客好評圖」")
             st.caption("放蝦皮置頂、IG、FB、TikTok、LINE 等，提升新客下單信任感。")
             c_n, c_tpl = st.columns(2)
             rev_n = c_n.number_input("要放幾筆好評?", min_value=1, max_value=12, value=3, step=1, key="rev_img_n")
@@ -908,7 +1144,7 @@ if doc:
     elif menu == "折價券管理":
         st.markdown("""
         <div class="main-title-box">
-            <h2 class="main-title-text">✦ 動態日期折價券管理 ✦</h2>
+            <div class="main-title-text">✦ 動態日期折價券管理 ✦</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -961,32 +1197,13 @@ if doc:
             with current_col:
                 # 埋入隱形錨點：讓 CSS 在手機上把左右兩欄改成上下單欄
                 st.markdown('<span class="coupon-grid-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                st.markdown(f"<p class='sub-title-text' style='margin-bottom:5px;'>🎟️ 折價券版位 {display_num}</p>", unsafe_allow_html=True)
-                
-                base_img = None
-                existing_row = next((r for r in cfg_data if len(r) > 0 and r[0] == f'coupon_{slot_id}'), None)
-                if existing_row and len(existing_row) > 1:
-                    try:
-                        chunks = [c for c in existing_row[1:] if c] 
-                        base_img = base64_chunks_to_img(chunks)
-                        st.image(base_img, width=300)
-                        st.markdown("<p style='font-size:12px; color:#8C877D; margin-top:2px; margin-bottom:5px;'>💡 <b>手機版：請直接「長按圖片」即可儲存。</b></p>", unsafe_allow_html=True)
-                    except Exception: st.warning("圖片載入異常，請重新上傳")
-                else:
-                    st.info("此版位目前為空，請先上傳底圖。")
-                
-                # ✨ 錨點魔法 1：下載鈕與操控按鈕
-                c_dl, c_up, c_down, c_del = st.columns(4) 
-                with c_dl:
-                    # 埋入隱形錨點供 CSS 辨識
+
+                # ✨ 標題＋上移／下移／刪除：同一排（標題在左，三顆方塊鍵靠右）
+                c_title, c_up, c_down, c_del = st.columns(4)
+                with c_title:
+                    # 埋入隱形錨點供 CSS 辨識（第一欄彈性、後三欄固定 40px 方塊鍵）
                     st.markdown('<span class="inline-row-btn" style="display:none;"></span>', unsafe_allow_html=True)
-                    if base_img:
-                        buf = BytesIO()
-                        # ✨ 畫質升級：無損 PNG 下載
-                        base_img.save(buf, format="PNG")
-                        st.download_button(label=f"💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
-                    else:
-                        st.markdown("<div style='height:40px;'></div>", unsafe_allow_html=True)
+                    st.markdown(f"<p class='sub-title-text' style='margin:0; line-height:40px;'>折價券版位 {display_num}</p>", unsafe_allow_html=True)
                 with c_up:
                     if st.button("↑", key=f"up_btn_{slot_id}", disabled=is_first):
                         st.session_state.active_slots[idx], st.session_state.active_slots[idx-1] = st.session_state.active_slots[idx-1], st.session_state.active_slots[idx]
@@ -1008,7 +1225,29 @@ if doc:
                         st.session_state.active_slots.remove(slot_id)
                         trigger_order_save(sheet_url, st.session_state.active_slots)
                         st.rerun()
-                
+
+                base_img = None
+                existing_row = next((r for r in cfg_data if len(r) > 0 and r[0] == f'coupon_{slot_id}'), None)
+                if existing_row and len(existing_row) > 1:
+                    try:
+                        chunks = [c for c in existing_row[1:] if c]
+                        base_img = base64_chunks_to_img(chunks)
+                        st.image(base_img, width=300)
+                    except Exception: st.warning("圖片載入異常，請重新上傳")
+                else:
+                    st.info("此版位目前為空，請先上傳底圖。")
+
+                # ✨ 下載鈕＋長按提示：同一排
+                if base_img:
+                    c_dl, c_hint = st.columns([0.8, 1.5])
+                    with c_dl:
+                        buf = BytesIO()
+                        # ✨ 畫質升級：無損 PNG 下載
+                        base_img.save(buf, format="PNG")
+                        st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}", use_container_width=True)
+                    with c_hint:
+                        st.markdown("<p style='font-size:11px; color:#A39C90; margin:0; line-height:42px; white-space:nowrap;'>💡 手機版可「長按圖片」儲存</p>", unsafe_allow_html=True)
+
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 
                 if new_file:
@@ -1066,8 +1305,8 @@ if doc:
                             font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
                             rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
 
-                            # 📍 位置來源：有元件就「點圖定位」，沒有就退回拉桿
-                            if HAS_IMG_COORDS:
+                            # 📍 位置來源：畫布拖曳 / 點圖定位 都用 session_state 記住座標；都沒有才退回拉桿
+                            if HAS_CANVAS or HAS_IMG_COORDS:
                                 x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                                 y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
                             else:
@@ -1104,21 +1343,77 @@ if doc:
                             preview_img.alpha_composite(rotated_txt, (paste_x, paste_y))
                             final_img_to_save = preview_img.convert("RGB")
                             
-                            if HAS_IMG_COORDS:
-                                st.markdown("**👇 預覽：手機可直接「點一下圖片」把文字移到該處（免拉桿）**")
+                            if HAS_CANVAS:
+                                st.markdown("**👇 直接拖曳日期文字：電腦用滑鼠、手機用手指，按住文字拖到想要的位置（會即時看著它移動）**")
+                                disp_w = 320
+                                scale = disp_w / base_img.width
+                                disp_h = max(1, int(base_img.height * scale))
+                                bg_disp = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
+                                # 在畫布上放一個可即時拖曳的文字物件（fabric），中心點對齊目前座標
+                                init_drawing = {
+                                    "version": "4.4.0",
+                                    "objects": [{
+                                        "type": "i-text",
+                                        "originX": "center", "originY": "center",
+                                        "left": float(x_pos * scale), "top": float(y_pos * scale),
+                                        "text": text_input if text_input.strip() else "日期",
+                                        "fill": text_color,
+                                        "fontSize": max(8, int(font_size * scale)),
+                                        "angle": float(rotation_angle),
+                                        "fontFamily": "sans-serif", "editable": False,
+                                    }],
+                                }
+                                try:
+                                    canvas_res = st_canvas(
+                                        background_image=bg_disp,
+                                        initial_drawing=init_drawing,
+                                        drawing_mode="transform",
+                                        update_streamlit=True,
+                                        height=disp_h, width=disp_w,
+                                        display_toolbar=False,
+                                        key=f"canvas_{slot_id}",
+                                    )
+                                except Exception:
+                                    canvas_res = None
+                                if canvas_res is not None and getattr(canvas_res, "json_data", None):
+                                    objs = canvas_res.json_data.get("objects", [])
+                                    if objs:
+                                        o = objs[0]
+                                        # originX/originY=center → left/top 即為文字中心（顯示座標）
+                                        new_dx, new_dy = o.get("left"), o.get("top")
+                                        if new_dx is not None and new_dy is not None:
+                                            # 拖曳超過 3px 才更新一次（避免微小誤差造成不停重畫）
+                                            if abs(new_dx - x_pos * scale) >= 3 or abs(new_dy - y_pos * scale) >= 3:
+                                                st.session_state[f"px_{slot_id}"] = max(0, min(int(new_dx / scale), base_img.width))
+                                                st.session_state[f"py_{slot_id}"] = max(0, min(int(new_dy / scale), base_img.height))
+                                                st.rerun()
+                                st.caption("💡 按住文字拖曳即可移動（即時跟手）。放開後下方是實際儲存效果，確認位置後按「✅ 確認儲存」。")
+                                st.markdown("**👇 實際儲存效果預覽：**")
+                                st.image(final_img_to_save, width=320)
+                            elif HAS_IMG_COORDS:
+                                st.markdown("**👇 預覽：電腦用滑鼠、手機用手指「按住拖移」到想要的位置（也可直接點該處）**")
                                 disp_w = 320
                                 disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))
-                                clicked = st_image_coordinates(disp_img, key=f"clk_{slot_id}")
-                                if clicked:
-                                    ratio = base_img.width / disp_w
-                                    nx, ny = int(clicked["x"] * ratio), int(clicked["y"] * ratio)
-                                    if nx != x_pos or ny != y_pos:
-                                        st.session_state[f"px_{slot_id}"] = nx
-                                        st.session_state[f"py_{slot_id}"] = ny
-                                        st.rerun()
+                                try:
+                                    coords = st_image_coordinates(disp_img, key=f"clk_{slot_id}", click_and_drag=True)
+                                except TypeError:
+                                    coords = st_image_coordinates(disp_img, key=f"clk_{slot_id}")
+                                if coords:
+                                    cx = coords.get("x2", coords.get("x"))
+                                    cy = coords.get("y2", coords.get("y"))
+                                    if cx is not None and cy is not None:
+                                        ratio = base_img.width / disp_w
+                                        nx, ny = int(cx * ratio), int(cy * ratio)
+                                        if nx != x_pos or ny != y_pos:
+                                            st.session_state[f"px_{slot_id}"] = nx
+                                            st.session_state[f"py_{slot_id}"] = ny
+                                            st.rerun()
+                                st.caption("💡 在上方圖片「按住並拖曳」可移動日期文字；放開滑鼠／手指後文字就會定位到該處。")
                             else:
                                 st.markdown("**👇 壓印即時預覽:**")
-                                st.image(final_img_to_save, width=300)
+                                # 🔴 在預覽上疊紅色十字準心＝文字中心點，拉桿一移、十字即時跟著走，方便對準
+                                st.image(_draw_marker(final_img_to_save, x_pos, y_pos), width=320)
+                                st.caption("🔴 紅色十字＝文字中心點。移動「左右／上下」拉桿，十字會即時跟著移動，對準想要的位置再按儲存（十字只是輔助線，不會壓進實際圖片）。")
                         else:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)

@@ -5,3 +5,5 @@ pandas
 gspread
 oauth2client
 streamlit-image-coordinates
+streamlit-drawable-canvas
+openpyxl

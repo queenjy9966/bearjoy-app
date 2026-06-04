@@ -1436,6 +1436,47 @@ if doc:
                 except Exception as e:
                     st.error(f"產生失敗：{e}")
 
+            # 📥 把已保存的評價原圖打包成 PNG（ZIP）下載，給美編用（檔名＝日期 評價圖-規格）
+            st.divider()
+            st.markdown("#### 📥 下載評價原圖（PNG，給美編用）")
+            st.caption("把已保存的顧客評價原圖打包成 ZIP 下載，每張 PNG 檔名＝「日期 評價圖-規格」。")
+            if st.button("📦 打包下載所有評價原圖（ZIP）"):
+                try:
+                    import zipfile
+                    mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
+                    mat = [r for r in mat if len(r) > 1 and r[0]]
+                    if not mat:
+                        st.info("還沒有已保存的評價原圖。請先到「批次評價處理」勾『💾 保存截圖』並處理幾筆。")
+                    else:
+                        # 帳號 → 規格 對照（從回覆紀錄取，用來命名）
+                        acc2spec = {}
+                        for r in review_pool:
+                            sp = _review_spec(r[2])
+                            if sp and r[1] not in acc2spec:
+                                acc2spec[r[1]] = sp
+                        zbuf = BytesIO()
+                        used = {}
+                        with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+                            for r in mat:
+                                try:
+                                    im = base64_chunks_to_img([c for c in r[1:] if c])
+                                except Exception:
+                                    continue
+                                parts = str(r[0]).split("_")
+                                date = parts[0] if parts else ""
+                                acc = "_".join(parts[2:]) if len(parts) > 2 else (parts[-1] if parts else "")
+                                base = f"{date} 評價圖-{_safe_filename(acc2spec.get(acc) or acc)}"
+                                k = used.get(base, 0); used[base] = k + 1
+                                fname = f"{base}.png" if k == 0 else f"{base}_{k + 1}.png"
+                                ib = BytesIO(); im.convert("RGB").save(ib, format="PNG")
+                                zf.writestr(fname, ib.getvalue())
+                        st.success(f"已打包 {sum(used.values())} 張原圖 ✅")
+                        st.download_button("💾 下載 ZIP", data=zbuf.getvalue(),
+                                           file_name=f"BearJoy_評價原圖_{datetime.now().strftime('%Y%m%d')}.zip",
+                                           mime="application/zip")
+                except Exception as e:
+                    st.error(f"打包失敗：{e}")
+
     # ==========================================
     # ✨ 動態文字壓印版：折價券管理
     # ==========================================

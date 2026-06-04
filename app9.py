@@ -22,6 +22,13 @@ try:
 except Exception:
     HAS_IMG_COORDS = False
 
+# 畫布編輯元件：滑鼠/手指直接拖曳移動＋拉角縮放＋轉角旋轉（沒裝成功就退回拖曳模式）
+try:
+    from streamlit_drawable_canvas import st_canvas
+    HAS_CANVAS = True
+except Exception:
+    HAS_CANVAS = False
+
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -348,7 +355,7 @@ st.markdown("""
         flex: 1 1 auto !important; text-align: center !important; margin: 0 !important;
     }
     [data-testid="stSidebar"] div[data-testid="stExpander"] summary p {
-        font-size: 14.5px !important; font-weight: 600 !important; white-space: nowrap !important;
+        font-size: 15px !important; font-weight: 600 !important; white-space: nowrap !important;
         line-height: 1.2 !important; margin: 0 !important; text-align: center !important;
         display: flex !important; align-items: center !important; justify-content: center !important;
     }
@@ -442,17 +449,24 @@ def write_df_to_sheet(doc, title, df):
     ws.clear()
     rows = [list(map(str, df.columns))] + df.astype(str).values.tolist()
     ws.append_rows(rows, value_input_option="RAW")
-    # 📐 每格靠左、靠上對齊（並自動換行），日期也不會變成靠右
+    # 📐 對齊：日期/時間/天數/次數欄靠右，其餘文字欄靠左；皆靠上＋自動換行展開
     try:
-        last_col = chr(ord('A') + min(len(df.columns) - 1, 25))
-        ws.format(f"A1:{last_col}{len(rows)}",
-                  {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP", "wrapStrategy": "WRAP"})
+        n = len(rows)
+        for i, name in enumerate(df.columns):
+            col = chr(ord('A') + i)
+            ws.format(f"{col}1:{col}{n}", {
+                "horizontalAlignment": "RIGHT" if _col_align_right(name) else "LEFT",
+                "verticalAlignment": "TOP", "wrapStrategy": "WRAP"})
     except Exception:
         pass
     try:
         return f"{doc.url}#gid={ws.id}"
     except Exception:
         return None
+
+def _col_align_right(name):
+    """欄位名稱含 日期/時間/天數/次數/數量/金額/互動 → 靠右（數字、日期慣例）；其餘靠左。"""
+    return any(k in str(name) for k in ["日期", "時間", "天數", "次數", "數量", "金額", "互動"])
 
 def _review_spec(content):
     """從評價內容抓出『規格』。整串都算規格（含中括號與顏色），不是只有【】內的字。
@@ -470,13 +484,15 @@ def _review_spec(content):
     return val.strip().rstrip("，,、 ")[:40]
 
 def _excel_align_left_top(ws):
-    """把 openpyxl 工作表每一格設成靠左、靠上對齊（並自動換行）。"""
+    """openpyxl 對齊：依表頭判斷，日期/時間/天數/次數欄靠右，其餘靠左；皆靠上＋自動換行。"""
     try:
         from openpyxl.styles import Alignment
-        al = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        right_cols = {i + 1 for i, h in enumerate(headers) if _col_align_right(h)}
         for row in ws.iter_rows():
             for c in row:
-                c.alignment = al
+                horiz = "right" if c.column in right_cols else "left"
+                c.alignment = Alignment(horizontal=horiz, vertical="top", wrap_text=True)
     except Exception:
         pass
 
@@ -644,7 +660,7 @@ def _render_collage(images):
     BW, pad, gap = 1600, 18, 14
     title_font = get_chinese_font(66)
     star_font = get_chinese_font(46)
-    top = 180
+    top = 230  # 標題＋五星留足空間，圖片從這裡才開始（標題與星星不擁擠）
     cols = 2 if len(images) > 1 else 1
     cell_w = int((BW - 2 * pad - (cols - 1) * gap) / cols)
     placed, col_y = [], [top] * cols
@@ -661,8 +677,8 @@ def _render_collage(images):
     img = Image.new("RGB", (BW, H), "#FAF8F5")
     d = ImageDraw.Draw(img)
     title, stars = "BearJoy 顧客真實好評", "★ ★ ★ ★ ★"
-    d.text(((BW - _text_w(d, title, title_font)) / 2, 50), title, font=title_font, fill="#4A4238")
-    d.text(((BW - _text_w(d, stars, star_font)) / 2, 118), stars, font=star_font, fill="#E0A96D")
+    d.text(((BW - _text_w(d, title, title_font)) / 2, 42), title, font=title_font, fill="#4A4238")
+    d.text(((BW - _text_w(d, stars, star_font)) / 2, 150), stars, font=star_font, fill="#E0A96D")
     for im, x, y, sw, sh in placed:
         try:
             d.rounded_rectangle([x - 3, y - 3, x + sw + 3, y + sh + 3], radius=12, outline="#E6E2D8", width=3)
@@ -974,9 +990,10 @@ if doc:
                                     ws_vip.update_cell(found_index + 2, 4, int(vip_records[found_index].get('互動次數', 0)) + 1)
                                 else:
                                     ws_vip.append_row([account, date_str, date_str, 1])
-                            # 📐 VIP 名單整欄靠左、靠上對齊（日期才不會自動靠右、看起來不一致）
+                            # 📐 VIP 名單對齊：帳號靠左；首次/最後互動日期、互動次數靠右（統一，不再忽左忽右）
                             try:
-                                ws_vip.format("A:D", {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP"})
+                                ws_vip.format("A:A", {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP"})
+                                ws_vip.format("B:D", {"horizontalAlignment": "RIGHT", "verticalAlignment": "TOP"})
                             except Exception:
                                 pass
                             msg = f"🎉 完美同步！新增 {len(new_rows)} 筆紀錄"
@@ -1167,67 +1184,49 @@ if doc:
             # 🖼️ 功能4：一鍵生成顧客好評圖（多尺寸、兩種版型）
             st.divider()
             st.markdown("#### 一鍵生成「顧客好評圖」")
-            st.caption("放蝦皮置頂、IG、FB、TikTok、LINE 等，提升新客下單信任感。")
-            c_n, c_tpl = st.columns(2)
-            rev_n = c_n.number_input("要放幾筆好評?", min_value=1, max_value=12, value=3, step=1, key="rev_img_n")
+            st.caption("貼蝦皮置頂、IG、FB、LINE，提升新客下單信任感。")
+            SIZE_PRESETS = {
+                "正方形 1:1（IG / 蝦皮 1080×1080）": (1080, 1080),
+                "直式 9:16（限動・Reels 1080×1920）": (1080, 1920),
+                "橫式（FB貼文 1200×630）": (1200, 630),
+                "LINE 圖文（1040×1040）": (1040, 1040),
+                "自訂尺寸…": None,
+            }
+            c_tpl, c_size = st.columns(2)
             template_label = c_tpl.selectbox("版型", [
                 "版型A：真實截圖拼接（用你上傳的評價圖）",
                 "版型B：文字精選卡",
                 "版型C：大字引用感",
             ], key="rev_tpl")
-
-            # ✋ 自己挑要放哪幾筆評價（版型B/C）：清單顯示每筆「完整內容」+勾選框，框內可捲動
-            with st.expander("✋ 自己挑要放哪幾筆好評（版型B/C；每筆顯示完整內容）", expanded=False):
-                if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
-                    st.session_state.refresh_review_pool = True
-                    st.rerun()
-                if review_pool:
-                    st.caption(f"共 {len(review_pool)} 筆（最新在前）。勾選想要的；不勾就用最新筆數。框內可上下捲動。")
-                    with st.container(height=360):
-                        for i, r in enumerate(review_pool):
-                            spec = _review_spec(r[2])
-                            st.checkbox(f"#{i + 1}　{r[1]}　［{spec or '無規格'}］", key=f"revpick_{i}")
-                            _content = str(r[2]).replace("<", "&lt;").replace(">", "&gt;")
-                            st.markdown(
-                                f"<div style='font-size:13px;color:#4A4238;line-height:1.5;margin:-6px 0 10px 26px;'>{_content}</div>",
-                                unsafe_allow_html=True)
-                else:
-                    st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
-            SIZE_PRESETS = {
-                "正方形 1:1（IG貼文 / 蝦皮 1080×1080）": (1080, 1080),
-                "直式 9:16（IG/FB限動・TikTok・Reels 1080×1920）": (1080, 1920),
-                "橫式（FB貼文 1200×630）": (1200, 630),
-                "LINE 圖文（1040×1040）": (1040, 1040),
-                "自訂尺寸…": None,
-            }
-            size_label = st.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
+            size_label = c_size.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
             target_size = SIZE_PRESETS[size_label]
             if target_size is None:
                 cw, ch = st.columns(2)
                 cust_w = cw.number_input("寬 (px)", 300, 4000, 1080, 20, key="rev_cw")
                 cust_h = ch.number_input("高 (px)", 300, 4000, 1080, 20, key="rev_ch")
                 target_size = (int(cust_w), int(cust_h))
+            rev_n = st.number_input("自動取幾筆（沒手動勾選時才用）", min_value=1, max_value=12, value=3, step=1, key="rev_img_n")
 
-            # 🖼️ 版型A：挑選要拼接的真實評價截圖（縮圖；數量多時可在框內捲動）
+            # 只顯示「當前版型」對應的挑選區，畫面更乾淨
             mat_pool = []
             if template_label.startswith("版型A"):
                 if "mat_pool" not in st.session_state or st.session_state.get("refresh_mat_pool"):
                     try:
                         _mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
                         _mat = [r for r in _mat if len(r) > 1 and r[0]]
-                        st.session_state.mat_pool = list(reversed(_mat))[:40]  # 最新40張(縮圖解碼較重故設上限)
+                        st.session_state.mat_pool = list(reversed(_mat))[:40]
                     except Exception:
                         st.session_state.mat_pool = []
                     st.session_state.refresh_mat_pool = False
                 mat_pool = st.session_state.mat_pool
-                with st.expander("🖼️ 挑選要拼接的真實評價截圖（不挑＝用最新幾張）", expanded=True):
-                    if st.button("🔄 重新整理截圖清單", key="refresh_mat"):
+                with st.expander("🖼️ 挑選要拼接的截圖（不挑＝用最新幾張）", expanded=True):
+                    if st.button("🔄 重新整理截圖", key="refresh_mat"):
                         st.session_state.refresh_mat_pool = True
                         st.rerun()
                     if not mat_pool:
-                        st.caption("還沒有已保存的評價截圖。請到「批次評價處理」勾選『💾 保存截圖』並處理幾筆。")
+                        st.caption("還沒有已保存的截圖。請到「批次評價處理」勾『💾 保存截圖』並處理幾筆。")
                     else:
-                        st.caption(f"共 {len(mat_pool)} 張（最新在前）。勾選想要的；不勾就用最新 {int(rev_n)} 張。框內可上下捲動。")
+                        st.caption(f"共 {len(mat_pool)} 張。勾選想要的；框內可上下捲動。")
                         thumbs = st.session_state.setdefault("_mat_thumbs", {})
                         with st.container(height=330):
                             cols = st.columns(3)
@@ -1236,15 +1235,30 @@ if doc:
                                     th = thumbs.get(r[0])
                                     if th is None:
                                         try:
-                                            im = base64_chunks_to_img([c for c in r[1:] if c])
-                                            im.thumbnail((220, 220))
-                                            th = im
+                                            im = base64_chunks_to_img([c for c in r[1:] if c]); im.thumbnail((220, 220)); th = im
                                         except Exception:
                                             th = False
                                         thumbs[r[0]] = th
                                     if th:
                                         st.image(th, use_container_width=True)
                                     st.checkbox(f"選 #{idx + 1}", key=f"matpick_{idx}")
+            else:
+                with st.expander("✋ 自己挑要放哪幾筆好評（每筆顯示完整內容）", expanded=False):
+                    if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
+                        st.session_state.refresh_review_pool = True
+                        st.rerun()
+                    if review_pool:
+                        st.caption(f"共 {len(review_pool)} 筆。勾選想要的；框內可上下捲動。")
+                        with st.container(height=360):
+                            for i, r in enumerate(review_pool):
+                                spec = _review_spec(r[2])
+                                st.checkbox(f"#{i + 1}　{r[1]}　［{spec or '無規格'}］", key=f"revpick_{i}")
+                                _content = str(r[2]).replace("<", "&lt;").replace(">", "&gt;")
+                                st.markdown(
+                                    f"<div style='font-size:13px;color:#4A4238;line-height:1.5;margin:-6px 0 10px 26px;'>{_content}</div>",
+                                    unsafe_allow_html=True)
+                    else:
+                        st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
 
             if st.button("✨ 產生好評圖", type="primary"):
                 try:
@@ -1396,7 +1410,7 @@ if doc:
 
                 # ✨ 下載鈕（窄）＋長按提示：同一排；提示文字與下載鍵框上下置中、不重疊
                 if base_img:
-                    c_dl, c_hint = st.columns([0.8, 1.7])
+                    c_dl, c_hint = st.columns([0.45, 1.7], gap="small")
                     with c_dl:
                         # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）
                         st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span>', unsafe_allow_html=True)
@@ -1456,16 +1470,16 @@ if doc:
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
-                            if HAS_IMG_COORDS:
-                                # 🖱️ 移動／縮放／旋轉 三種模式，全部用滑鼠在圖片上拖曳，取代「大小／旋轉」兩條 BAR
-                                edit_mode = st.radio(
-                                    "操作模式", ["✋ 移動", "🔍 縮放", "🔄 旋轉"],
-                                    horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
-                                font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
-                                rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
-                                x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
-                                y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            else:
+                            # 壓印操作：優先用畫布「直接拖/縮/轉」（不切模式、無 BAR）；跑不出來可勾下方切回拖曳
+                            fallback_drag = False
+                            if HAS_CANVAS:
+                                fallback_drag = st.checkbox("⚙️ 畫布若跑不出圖，勾這裡改用拖曳模式", key=f"cvfb_{slot_id}")
+                            use_canvas = HAS_CANVAS and not fallback_drag
+                            font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
+                            rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
+                            x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
+                            y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
+                            if not HAS_CANVAS and not HAS_IMG_COORDS:
                                 c_sz, c_rot = st.columns(2)
                                 c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
                                 font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
@@ -1503,7 +1517,59 @@ if doc:
                             preview_img.alpha_composite(rotated_txt, (paste_x, paste_y))
                             final_img_to_save = preview_img.convert("RGB")
 
-                            if HAS_IMG_COORDS:
+                            if use_canvas:
+                                st.markdown("**👇 點一下紅框選取它 → 拖曳移動、拉四角縮放、轉上方圓點旋轉（放開即套用）**")
+                                disp_w = 340
+                                cscale = disp_w / base_img.width
+                                disp_h = max(1, int(base_img.height * cscale))
+                                # 背景＝已壓好字的預覽圖（就算紅框失效也一定看得到圖）
+                                bg_disp = final_img_to_save.resize((disp_w, disp_h), Image.LANCZOS).convert("RGB")
+                                rw = max(20.0, text_w * cscale)
+                                rh = max(16.0, text_h * cscale)
+                                init_drawing = {"version": "4.4.0", "objects": [{
+                                    "type": "rect", "originX": "center", "originY": "center",
+                                    "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                    "width": float(rw), "height": float(rh),
+                                    "fill": "rgba(224,83,61,0.12)", "stroke": "#E0533D", "strokeWidth": 2,
+                                    "scaleX": 1.0, "scaleY": 1.0, "angle": float(rotation_angle),
+                                }]}
+                                try:
+                                    cres = st_canvas(
+                                        background_image=bg_disp, initial_drawing=init_drawing,
+                                        drawing_mode="transform", update_streamlit=True,
+                                        height=disp_h, width=disp_w, display_toolbar=False,
+                                        key=f"cv_{slot_id}")
+                                except Exception:
+                                    cres = None
+                                if cres is not None and getattr(cres, "json_data", None):
+                                    objs = cres.json_data.get("objects", [])
+                                    if objs:
+                                        o = objs[0]
+                                        sx = float(o.get("scaleX", 1) or 1)
+                                        ang = float(o.get("angle", 0) or 0)
+                                        lx, ty2 = o.get("left"), o.get("top")
+                                        changed = False
+                                        if lx is not None and ty2 is not None:
+                                            nx = max(0, min(int(lx / cscale), base_img.width))
+                                            ny = max(0, min(int(ty2 / cscale), base_img.height))
+                                            if abs(nx - x_pos) >= 2 or abs(ny - y_pos) >= 2:
+                                                st.session_state[f"px_{slot_id}"] = nx
+                                                st.session_state[f"py_{slot_id}"] = ny
+                                                changed = True
+                                        ns = max(10, min(int(round(font_size * sx)), 200))
+                                        if ns != font_size:
+                                            st.session_state[f"csz_{slot_id}"] = ns
+                                            changed = True
+                                        nr = max(-180, min(int(round(((ang + 180) % 360) - 180)), 180))
+                                        if nr != rotation_angle:
+                                            st.session_state[f"crot_{slot_id}"] = nr
+                                            changed = True
+                                        if changed:
+                                            st.rerun()
+                                st.caption("紅框只是把手（不會壓進圖）：拖曳=移動、拉四角=縮放、轉圓點=旋轉。")
+                            elif HAS_IMG_COORDS:
+                                edit_mode = st.radio("操作模式", ["✋ 移動", "🔍 縮放", "🔄 旋轉"],
+                                                     horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
                                 disp_w = 320
                                 disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))
                                 try:
@@ -1515,7 +1581,7 @@ if doc:
                                     ry = coords.get("y2", coords.get("y"))
                                     if rx is not None and ry is not None:
                                         ratio = base_img.width / disp_w
-                                        cxd, cyd = x_pos / ratio, y_pos / ratio  # 目前文字中心（顯示座標）
+                                        cxd, cyd = x_pos / ratio, y_pos / ratio
                                         changed = False
                                         if "移動" in edit_mode:
                                             nx, ny = int(rx * ratio), int(ry * ratio)
@@ -1529,7 +1595,7 @@ if doc:
                                             if ns != font_size:
                                                 st.session_state[f"csz_{slot_id}"] = ns
                                                 changed = True
-                                        else:  # 旋轉
+                                        else:
                                             ang = math.degrees(math.atan2(ry - cyd, rx - cxd))
                                             nr = max(-180, min(int(round(ang)), 180))
                                             if nr != rotation_angle:
@@ -1537,10 +1603,7 @@ if doc:
                                                 changed = True
                                         if changed:
                                             st.rerun()
-                                _hint = {"✋ 移動": "拖曳到想要的位置（放開定位）",
-                                         "🔍 縮放": "從文字往外拖：離越遠字越大、越近越小",
-                                         "🔄 旋轉": "往哪個方向拖，文字就朝那個方向轉"}.get(edit_mode, "")
-                                st.caption(f"目前模式：{edit_mode}　·　{_hint}")
+                                st.caption(f"拖曳模式：{edit_mode}（縮放＝離中心越遠越大；旋轉＝拖曳方向）")
                             else:
                                 st.image(_draw_marker(final_img_to_save, x_pos, y_pos), width=320)
                                 st.caption("紅十字＝文字位置，用上方拉桿調整位置/大小/旋轉。")

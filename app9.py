@@ -254,21 +254,21 @@ st.markdown("""
         padding: 0 !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-txt):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) {
-        flex: 0 0 45px !important; 
-        width: 45px !important; 
-        min-width: 45px !important; 
-        max-width: 45px !important;
+        flex: 0 0 56px !important;
+        width: 56px !important;
+        min-width: 56px !important;
+        max-width: 56px !important;
         padding: 0 !important;
-        padding-bottom: 2px !important;
     }
-    
+
     div[data-testid="stTextArea"] label, div[data-testid="stColorPicker"] label {
         font-size: 13px !important; font-weight: bold !important; color: #798571 !important;
         margin-bottom: 4px !important; padding: 0 !important; white-space: nowrap !important;
     }
     div[data-testid="stTextArea"] textarea { min-height: 52px !important; height: 52px !important; padding: 6px 10px !important; }
-    div[data-testid="stColorPicker"] { margin-top: 0px !important; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end;}
-    div[data-testid="stColorPicker"] div[role="button"] { width: 34px !important; height: 34px !important; padding: 0 !important; border-radius: 4px !important; }
+    /* 顏色色塊＝正方形，高度與左邊壓印文字框一致(52px)、底部對齊 */
+    div[data-testid="stColorPicker"] { margin-top: 0px !important; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start;}
+    div[data-testid="stColorPicker"] div[role="button"] { width: 52px !important; height: 52px !important; min-width: 52px !important; padding: 0 !important; border-radius: 6px !important; }
 
     /* ========================================================= */
     /* 拉桿(BAR)對齊優化 */

@@ -1154,25 +1154,21 @@ if doc:
                 "版型C：大字引用感",
             ], key="rev_tpl")
 
-            # ✋ 自己挑要放哪幾筆評價（版型B/C；勾選後可看完整內容；不挑＝自動用最新、且只取有規格的）
-            with st.expander("✋ 自己挑要放哪幾筆好評（版型B/C；可看完整內容）"):
+            # ✋ 自己挑要放哪幾筆評價（版型B/C）：清單顯示每筆「完整內容」+勾選框，框內可捲動
+            with st.expander("✋ 自己挑要放哪幾筆好評（版型B/C；每筆顯示完整內容）", expanded=False):
                 if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
                     st.session_state.refresh_review_pool = True
                     st.rerun()
                 if review_pool:
-                    def _rev_label(i):
-                        r = review_pool[i]
-                        spec = _review_spec(r[2])
-                        snippet = " ".join(str(r[2]).split())[:30]
-                        return f"{r[1]} ［{spec or '無規格'}］ {snippet}…"
-                    st.multiselect("勾選要做成素材的評價（可多選；勾了就以這些為準）",
-                                   options=list(range(len(review_pool))),
-                                   format_func=_rev_label, key="picked_reviews")
-                    # 顯示已勾選評價的完整內容，挑的時候看得到全文
-                    for i in st.session_state.get("picked_reviews", []):
-                        if i < len(review_pool):
-                            r = review_pool[i]
-                            st.markdown(f"- **{r[1]}**：{r[2]}")
+                    st.caption(f"共 {len(review_pool)} 筆（最新在前）。勾選想要的；不勾就用最新筆數。框內可上下捲動。")
+                    with st.container(height=360):
+                        for i, r in enumerate(review_pool):
+                            spec = _review_spec(r[2])
+                            st.checkbox(f"#{i + 1}　{r[1]}　［{spec or '無規格'}］", key=f"revpick_{i}")
+                            _content = str(r[2]).replace("<", "&lt;").replace(">", "&gt;")
+                            st.markdown(
+                                f"<div style='font-size:13px;color:#4A4238;line-height:1.5;margin:-6px 0 10px 26px;'>{_content}</div>",
+                                unsafe_allow_html=True)
                 else:
                     st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
             SIZE_PRESETS = {
@@ -1248,7 +1244,7 @@ if doc:
                     else:
                         # 版型B/C：用 AI 解析後的文字做圖
                         # 有勾選就用勾選的；沒勾就自動取最新、且「只取有規格」的（確保每則都有規格、也避免新舊重複）
-                        picked = [i for i in st.session_state.get("picked_reviews", []) if i < len(review_pool)]
+                        picked = [i for i in range(len(review_pool)) if st.session_state.get(f"revpick_{i}")]
                         if picked:
                             rows = [review_pool[i] for i in picked]
                         else:

@@ -594,7 +594,15 @@ def _review_spec(content):
     idxs = [val.find(c) for c in ["｜", "|", "，", ","] if c in val]
     if idxs:
         val = val[:min(idxs)]
-    return val.strip().rstrip("，,、 ")[:40]
+    return _spec_no_color(val)
+
+def _spec_no_color(val):
+    """規格去顏色：款式多在中括號 [..] 內，括號後通常是顏色 → 截到最後一個 ] 為止，
+    讓「[三層款…]黑色」「[三層款…]粉色」合併成同一款，不會分太細。沒有中括號就原樣。"""
+    val = str(val).strip().rstrip("，,、 ")
+    if "]" in val:
+        val = val[:val.rfind("]") + 1]
+    return val[:40]
 
 def _mat_meta(row_id):
     """解析評價截圖素材 id：『YYYYMMDD_HHMMSS_帳號|||規格』→ (日期, 帳號, 規格)。舊資料沒有規格回空。"""
@@ -1386,7 +1394,7 @@ if doc:
                             acc2spec[rr[1]] = sp
                     def _mat_spec(r):
                         _, a, sp = _mat_meta(r[0])
-                        return sp or acc2spec.get(a, "")
+                        return _spec_no_color(sp) if sp else acc2spec.get(a, "")
                     # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：選項用全部規格清單，4 個款都會出現
                     fa1, fa2 = st.columns(2)
                     ma_specs = fa1.multiselect("選規格（可複選；留空＝全部）",
@@ -1406,11 +1414,11 @@ if doc:
                                     for r in _no_spec:
                                         try:
                                             im = base64_chunks_to_img([c for c in r[1:] if c])
-                                            sp = (gemini_generate(api_key, ["只回答這張蝦皮評價截圖中顧客購買的『規格/分類/款式』的完整文字（含中括號與顏色），例如：[三層款 可拆卸 十合一]黑色。找不到就只回『無』。只回規格本身，不要任何多餘文字。", im]) or "").strip()
-                                            sp = sp.splitlines()[0].strip() if sp else ""
+                                            sp = (gemini_generate(api_key, ["只回答這張蝦皮評價截圖中顧客購買的『規格/分類/款式』，例如：[三層款 可拆卸 十合一]。要含中括號內款式，但『不要顏色』（不要黑色/粉色那種）。找不到就只回『無』。只回規格本身，不要任何多餘文字。", im]) or "").strip()
+                                            sp = _spec_no_color(sp.splitlines()[0].strip()) if sp else ""
                                             if sp and sp != "無" and idmap.get(r[0]):
                                                 base = r[0].split("|||")[0]
-                                                ws_mat2.update_cell(idmap[r[0]], 1, f"{base}|||{sp[:40]}")
+                                                ws_mat2.update_cell(idmap[r[0]], 1, f"{base}|||{sp}")
                                                 done += 1
                                             time.sleep(2)
                                         except Exception:
@@ -1550,7 +1558,7 @@ if doc:
                                     except Exception:
                                         continue
                                     date, acc, spec = _mat_meta(r[0])
-                                    base = f"{date} 評價圖-{_safe_filename(spec or acc2spec.get(acc) or acc)}"
+                                    base = f"{date} 評價圖-{_safe_filename(_spec_no_color(spec) if spec else (acc2spec.get(acc) or acc))}"
                                     k = used.get(base, 0); used[base] = k + 1
                                     fname = f"{base}.png" if k == 0 else f"{base}_{k + 1}.png"
                                     ib = BytesIO(); im.convert("RGB").save(ib, format="PNG")

@@ -180,7 +180,7 @@ st.markdown("""
         background: #687560 !important; color: #FFFFFF !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button:disabled {
-        opacity: 0.45 !important; color: #FFFFFF !important;
+        opacity: 1 !important; color: #FFFFFF !important;
     }
     /* ✨ 三鍵大地色系（每個版位都一致）：↑上移＝卡其、↓下移＝大地綠、✕刪除＝大地紅，白字 */
     /* ↑ 上移：卡其 */
@@ -434,10 +434,28 @@ def write_df_to_sheet(doc, title, df):
     ws.clear()
     rows = [list(map(str, df.columns))] + df.astype(str).values.tolist()
     ws.append_rows(rows, value_input_option="RAW")
+    # 📐 每格靠左、靠上對齊（並自動換行），日期也不會變成靠右
+    try:
+        last_col = chr(ord('A') + min(len(df.columns) - 1, 25))
+        ws.format(f"A1:{last_col}{len(rows)}",
+                  {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP", "wrapStrategy": "WRAP"})
+    except Exception:
+        pass
     try:
         return f"{doc.url}#gid={ws.id}"
     except Exception:
         return None
+
+def _excel_align_left_top(ws):
+    """把 openpyxl 工作表每一格設成靠左、靠上對齊（並自動換行）。"""
+    try:
+        from openpyxl.styles import Alignment
+        al = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        for row in ws.iter_rows():
+            for c in row:
+                c.alignment = al
+    except Exception:
+        pass
 
 # ==========================================
 # ✨ 銷售加值工具：AI 分析、好評圖
@@ -525,9 +543,8 @@ def _text_w(draw, text, font):
 
 def _render_content(reviews, template):
     """回傳一張內容圖（米底），之後再縮放置中到目標尺寸。
-    ✨ 每則評價：左上角放 ★★★★★、帳號、購買規格（若有），下方為內文（左對齊）。
-    ✨ 卡片高度改用『實際量測的文字高度』決定，文字一定包在框內、不會超出。
-    reviews 可為 (帳號, 內容) 或 (帳號, 內容, 購買規格)。"""
+    ✨ 每則評價：星星、帳號、內文都『置中於文字框』；規格已併入評價內容一起顯示。
+    ✨ 卡片高度用『實際量測的文字高度』決定，文字一定包在框內、不會超出。"""
     BW, pad = 1000, 50
     stars = "★ ★ ★ ★ ★"
     is_quote = (template == "quote")
@@ -536,38 +553,27 @@ def _render_content(reviews, template):
     title_font = get_chinese_font(52 if is_quote else 50)
     body_font = get_chinese_font(40 if is_quote else 34)
     acc_font = get_chinese_font(28)
-    spec_font = get_chinese_font(26)
     star_font = get_chinese_font(30)
 
     line_gap = 12          # 內文行距
-    inner = 36             # 卡片左右內留白
     pads_v = 28            # 卡片上下內留白
-    star_h, acc_h, spec_h = 38, 38, 40
+    star_h, acc_h = 44, 42
     gap_between = 30       # 卡片之間距
     max_chars = 18 if is_quote else 22
 
-    def norm(item):
-        a, b = item[0], item[1]
-        s = str(item[2]).strip() if len(item) >= 3 else ""
-        if s in ("無", "解析失敗", "未知", "None"):
-            s = ""
-        if len(s) > 24:
-            s = s[:24] + "…"
-        return _mask_account(a), s, "\n".join(_wrap_cjk(b, max_chars))
+    blocks = [(_mask_account(it[0]), "\n".join(_wrap_cjk(it[1], max_chars))) for it in reviews]
 
-    blocks = [norm(it) for it in reviews]
-
-    def measure_h(text, font):
+    def measure(text, font):
         try:
             bb = dummy.multiline_textbbox((0, 0), text, font=font, spacing=line_gap)
-            return bb[3] - bb[1]
+            return bb[2] - bb[0], bb[3] - bb[1]
         except Exception:
-            return (text.count("\n") + 1) * 50
+            return 600, (text.count("\n") + 1) * 50
 
     heights = []
-    for _, spec, body in blocks:
-        h = pads_v + star_h + acc_h + (spec_h if spec else 0) + 10 + measure_h(body, body_font) + pads_v
-        heights.append(h)
+    for _, body in blocks:
+        _, bh = measure(body, body_font)
+        heights.append(pads_v + star_h + acc_h + 10 + bh + pads_v)
 
     title = "顧客真實心得" if is_quote else "BearJoy 顧客真實好評"
     top = 150
@@ -577,24 +583,21 @@ def _render_content(reviews, template):
     d.text(((BW - _text_w(d, title, title_font)) / 2, 55), title, font=title_font, fill="#4A4238")
 
     y = top
-    for (acc, spec, body), h in zip(blocks, heights):
+    for (acc, body), h in zip(blocks, heights):
         cb = y + h
         if not is_quote:
             try:
                 d.rounded_rectangle([pad, y, BW - pad, cb], radius=22, fill="#FFFFFF", outline="#E6E2D8", width=2)
             except Exception:
                 d.rectangle([pad, y, BW - pad, cb], fill="#FFFFFF", outline="#E6E2D8")
-        x0 = pad + inner
         ty = y + pads_v
-        # 左上角：星星 + 帳號（+ 購買規格）
-        d.text((x0, ty), stars, font=star_font, fill="#E0A96D")
-        d.text((x0, ty + star_h), f"@{acc}", font=acc_font, fill="#A0998C")
-        cy = ty + star_h + acc_h
-        if spec:
-            d.text((x0, cy), f"購買規格：{spec}", font=spec_font, fill="#8A8275")
-            cy += spec_h
-        # 內文（左對齊、實測高度，不會超出框）
-        d.multiline_text((x0, cy + 10), body, font=body_font, fill="#4A4238", spacing=line_gap)
+        # 置中：星星 + 帳號 + 內文
+        d.text(((BW - _text_w(d, stars, star_font)) / 2, ty), stars, font=star_font, fill="#E0A96D")
+        acc_t = f"@{acc}"
+        d.text(((BW - _text_w(d, acc_t, acc_font)) / 2, ty + star_h), acc_t, font=acc_font, fill="#A0998C")
+        bw, _ = measure(body, body_font)
+        d.multiline_text(((BW - bw) / 2, ty + star_h + acc_h + 10), body,
+                         font=body_font, fill="#4A4238", spacing=line_gap, align="center")
         y = cb + gap_between
     return img
 
@@ -876,9 +879,12 @@ if doc:
                             # ✨ 穩定性：用安全解析，AI 少打一個標籤也不會整個崩潰
                             acc = _extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]) or "未知"
                             rev = _extract_section(res_text, "[REVIEW]", ["[SPEC]", "[PUBLIC]"]) or "解析失敗"
-                            spec = _extract_section(res_text, "[SPEC]", ["[PUBLIC]"]) or ""
+                            spec = (_extract_section(res_text, "[SPEC]", ["[PUBLIC]"]) or "").strip()
                             pub = _extract_section(res_text, "[PUBLIC]", ["[PRIVATE]"]) or "解析失敗"
                             priv = _extract_section(res_text, "[PRIVATE]", []) or "解析失敗"
+                            # 📌 把購買規格併進「原始評價內容」開頭，後續做好評素材就會自動帶到規格
+                            if spec and spec != "無" and rev != "解析失敗" and not rev.startswith("規格"):
+                                rev = f"規格：{spec}｜{rev}"
                             # 🎁 功能1：私訊結尾自動附上回購優惠碼，把「感謝」變成「再買一次」
                             if priv != "解析失敗" and repurchase_code.strip():
                                 offer_txt = f"（{repurchase_offer.strip()}）" if repurchase_offer.strip() else ""
@@ -896,29 +902,21 @@ if doc:
                             with cards_container:
                                 with st.expander(f"✨ 客戶帳號：{acc}", expanded=True):
                                     st.markdown(f"**📝 原始評價內容:** {rev}")
-                                    if spec.strip() and spec.strip() != "無":
-                                        st.markdown(f"**🛍 購買規格:** {spec.strip()}")
                                     st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
                                     st.code(pub, language="text")
                                     st.markdown("**💌 私訊回覆 (點擊右上角複製):**")
                                     st.code(priv, language="text")
                             
-                            results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv, spec.strip()])
+                            results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv])
 
                     if doc and results_to_cloud:
                         try:
                             ws_history = get_or_create_ws(doc, "回覆紀錄")
                             existing = ws_history.get_all_values()
                             if len(existing) == 0:
-                                header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆", "購買規格"]
+                                header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"]
                                 ws_history.append_row(header)
                                 existing = [header]
-                            elif "購買規格" not in existing[0]:
-                                # 舊表沒有「購買規格」欄就補上，確保新資料對齊（規格在最後一欄，不影響原欄位）
-                                try:
-                                    ws_history.update_cell(1, len(existing[0]) + 1, "購買規格")
-                                except Exception:
-                                    pass
                             # 🔁 功能5：用 (帳號, 評價內容) 去重，同一筆評價不重複計算
                             seen_pairs = set((str(r[1]).strip(), str(r[2]).strip()) for r in existing[1:] if len(r) > 2)
                             new_rows, dup_count = [], 0
@@ -953,6 +951,11 @@ if doc:
                                     ws_vip.update_cell(found_index + 2, 4, int(vip_records[found_index].get('互動次數', 0)) + 1)
                                 else:
                                     ws_vip.append_row([account, date_str, date_str, 1])
+                            # 📐 VIP 名單整欄靠左、靠上對齊（日期才不會自動靠右、看起來不一致）
+                            try:
+                                ws_vip.format("A:D", {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP"})
+                            except Exception:
+                                pass
                             msg = f"🎉 完美同步！新增 {len(new_rows)} 筆紀錄"
                             if dup_count:
                                 msg += f"（已自動略過 {dup_count} 筆重複評價，不重複計算互動次數）"
@@ -1015,6 +1018,7 @@ if doc:
                                 xbuf = BytesIO()
                                 with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
                                     df_sleep.to_excel(writer, index=False, sheet_name="沉睡客名單")
+                                    _excel_align_left_top(writer.sheets["沉睡客名單"])
                                 cdl1, cdl2 = st.columns(2)
                                 with cdl1:
                                     st.download_button(
@@ -1080,7 +1084,11 @@ if doc:
             if st.session_state.get("insight_result"):
                 st.markdown(st.session_state.insight_result)
                 # 📌 多一欄「品名」才知道是哪一類商品（不用太細，一類產品填一個就好）；分析內容整段放同一格
-                insight_product = st.text_input("品名／品類（會寫進 Excel 第一欄，例：保鮮盒、瀝水架；不用太細）", key="insight_product")
+                insight_product = st.text_input(
+                    "品名／產品線（會寫進 Excel 第一欄，填產品線就好，例：旅行收納袋）",
+                    key="insight_product",
+                    help="一個銷售頁有多款（三層款/壓縮款/標準款）時，這裡只填『產品線』，各款差異不用寫這裡——"
+                         "因為每筆評價內容已自動帶到顧客買的『規格』，要細分時看評價內的規格即可。")
                 df_insight = pd.DataFrame([{
                     "品名": insight_product.strip() if insight_product.strip() else "（未填品名）",
                     "顧客優點分析": str(st.session_state.insight_result).strip(),
@@ -1091,6 +1099,7 @@ if doc:
                         ibuf = BytesIO()
                         with pd.ExcelWriter(ibuf, engine="openpyxl") as writer:
                             df_insight.to_excel(writer, index=False, sheet_name="顧客優點分析")
+                            _excel_align_left_top(writer.sheets["顧客優點分析"])
                         st.download_button(
                             "📥 下載 Excel",
                             data=ibuf.getvalue(),
@@ -1121,6 +1130,31 @@ if doc:
                 "版型B：文字精選卡",
                 "版型C：大字引用感",
             ], key="rev_tpl")
+
+            # ✋ 讓你自己挑要放哪幾筆評價（版型B/C 用文字評價；不挑＝自動用最新筆數）
+            if "review_pool" not in st.session_state or st.session_state.get("refresh_review_pool"):
+                try:
+                    _hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
+                    _rows = [r for r in _hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
+                    st.session_state.review_pool = list(reversed(_rows))  # 最新在前
+                except Exception:
+                    st.session_state.review_pool = []
+                st.session_state.refresh_review_pool = False
+            review_pool = st.session_state.review_pool
+            with st.expander("✋ 自己挑要放哪幾筆好評（版型B/C；不挑就用上面的最新筆數）"):
+                if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
+                    st.session_state.refresh_review_pool = True
+                    st.rerun()
+                if review_pool:
+                    def _rev_label(i):
+                        r = review_pool[i]
+                        snippet = " ".join(str(r[2]).split())[:24]
+                        return f"{r[1]}｜{snippet}…"
+                    st.multiselect("勾選要做成素材的評價（可多選；勾了就以這些為準）",
+                                   options=list(range(len(review_pool))),
+                                   format_func=_rev_label, key="picked_reviews")
+                else:
+                    st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
             SIZE_PRESETS = {
                 "正方形 1:1（IG貼文 / 蝦皮 1080×1080）": (1080, 1080),
                 "直式 9:16（IG/FB限動・TikTok・Reels 1080×1920）": (1080, 1920),
@@ -1155,11 +1189,13 @@ if doc:
                             card = make_collage_image(imgs, size=target_size)
                     else:
                         # 版型B/C：用 AI 解析後的文字做圖
-                        hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
-                        rows = [r for r in hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
-                        rows = rows[::-1][:int(rev_n)]
-                        # (帳號, 評價內容, 購買規格)；規格在第 6 欄(index 5)，舊資料沒有就空白
-                        reviews = [(r[1], r[2], r[5] if len(r) > 5 else "") for r in rows]
+                        # 有勾選就用勾選的；沒勾就用最新 rev_n 筆（評價內容已含規格）
+                        picked = [i for i in st.session_state.get("picked_reviews", []) if i < len(review_pool)]
+                        if picked:
+                            rows = [review_pool[i] for i in picked]
+                        else:
+                            rows = review_pool[:int(rev_n)]
+                        reviews = [(r[1], r[2]) for r in rows]
                         if not reviews:
                             st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
                         else:

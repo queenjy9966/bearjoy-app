@@ -387,8 +387,9 @@ st.markdown("""
         text-align: center !important; margin: 0 !important; pointer-events: none !important;
     }
     [data-testid="stSidebar"] div[data-testid="stExpander"] summary p {
-        font-size: 15px !important; font-weight: 600 !important; white-space: nowrap !important;
+        font-size: 15px !important; font-weight: bold !important; white-space: nowrap !important;
         line-height: 1.2 !important; margin: 0 !important; text-align: center !important;
+        color: #4A4238 !important;
         display: flex !important; align-items: center !important; justify-content: center !important;
     }
     /* ✨ 側邊欄折疊內文：整區（含粗體標題、條列數字 1/2/3）統一同一字級、同樣行距，不雜亂 */
@@ -499,6 +500,59 @@ def write_df_to_sheet(doc, title, df):
 def _col_align_right(name):
     """欄位名稱含 日期/時間/天數/次數/數量/金額/互動 → 靠右（數字、日期慣例）；其餘靠左。"""
     return any(k in str(name) for k in ["日期", "時間", "天數", "次數", "數量", "金額", "互動"])
+
+def _strip_md(text):
+    """移除 Markdown 標記（**粗體**、*斜體*、# 標題、` 程式碼、條列符號），給 Excel／試算表用純文字。"""
+    s = str(text)
+    s = s.replace("**", "").replace("__", "")
+    s = re.sub(r'(?<!\*)\*(?!\*)', '', s)
+    s = re.sub(r'^#{1,6}\s*', '', s, flags=re.M)
+    s = s.replace("`", "")
+    s = re.sub(r'^\s*[-•*]\s+', '', s, flags=re.M)
+    return s.strip()
+
+# 顧客評價原圖要備份到的 Google Drive 資料夾（需先把此資料夾分享給服務帳號 client_email）
+DRIVE_FOLDER_ID = "1ZamXtEG9tiG6HTQJXTD6e_am6u3B4bGz"
+
+@st.cache_resource(show_spinner=False)
+def _drive_service():
+    """建立 Google Drive API 連線（用與試算表相同的服務帳號金鑰），快取重用。"""
+    scope = ["https://www.googleapis.com/auth/drive"]
+    creds = None
+    try:
+        if "type" in st.secrets:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(dict(st.secrets), scope)
+    except Exception:
+        pass
+    if not creds:
+        kp = os.path.join(os.path.dirname(__file__), "google_key.json")
+        if os.path.exists(kp):
+            creds = ServiceAccountCredentials.from_json_keyfile_name(kp, scope)
+    if not creds:
+        raise RuntimeError("找不到金鑰")
+    import httplib2
+    from googleapiclient.discovery import build
+    return build("drive", "v3", http=creds.authorize(httplib2.Http()), cache_discovery=False)
+
+def _safe_filename(s):
+    s = re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", str(s)).strip()
+    return (s[:80] or "未命名")
+
+def upload_img_to_drive(img, filename, folder_id=DRIVE_FOLDER_ID):
+    """把 PIL 圖片上傳到指定 Google Drive 資料夾；回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
+    try:
+        from googleapiclient.http import MediaIoBaseUpload
+        buf = BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        buf.seek(0)
+        svc = _drive_service()
+        f = svc.files().create(
+            body={"name": filename, "parents": [folder_id]},
+            media_body=MediaIoBaseUpload(buf, mimetype="image/png", resumable=False),
+            fields="id, webViewLink", supportsAllDrives=True).execute()
+        return True, f.get("webViewLink")
+    except Exception as e:
+        return False, str(e)
 
 def _review_spec(content):
     """從評價內容抓出『規格』。整串都算規格（含中括號與顏色），不是只有【】內的字。
@@ -872,6 +926,9 @@ if doc:
                 is_vip_check = cck1.checkbox("🌟 回購語氣")
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
+                save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=True,
+                                            help="把上傳的評價原圖存到指定的 Google Drive 資料夾，檔名＝「日期 評價圖-規格」。"
+                                                 "需先把該資料夾分享給服務帳號 bearjoy-bot@bearjoy-crm.iam.gserviceaccount.com（編輯者）。")
                 # 🎁 功能1：回購優惠碼設定收進摺疊區，平時不佔版面、要用再展開
                 if "saved_repurchase" not in st.session_state:
                     try:
@@ -991,6 +1048,14 @@ if doc:
                                     ws_mat.append_row([f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}"] + img_to_chunks_compact(img.copy()))
                                 except Exception as e:
                                     st.caption(f"⚠️ 此筆截圖素材保存略過（不影響回覆）：{e}")
+
+                            # ☁️ 備份原圖到 Google Drive 資料夾，檔名＝「日期 評價圖-規格」
+                            if save_to_drive:
+                                _spec_for_name = _review_spec(rev) or (spec if spec and spec != "無" else acc)
+                                _fname = f"{now.strftime('%Y%m%d')} 評價圖-{_safe_filename(_spec_for_name)}.png"
+                                ok_d, info_d = upload_img_to_drive(img.copy(), _fname)
+                                if not ok_d:
+                                    st.caption(f"⚠️ 此筆未能備份到 Drive（不影響回覆）：{str(info_d)[:90]}")
                             
                             with cards_container:
                                 with st.expander(f"✨ 客戶帳號：{acc}", expanded=True):
@@ -1208,7 +1273,7 @@ if doc:
                 # 第一欄＝規格（哪一款），分析內容整段放同一格
                 df_insight = pd.DataFrame([{
                     "規格": st.session_state.get("insight_spec_used", "全部"),
-                    "顧客優點分析": str(st.session_state.insight_result).strip(),
+                    "顧客優點分析": _strip_md(st.session_state.insight_result),
                 }])
                 cin1, cin2 = st.columns(2)
                 with cin1:

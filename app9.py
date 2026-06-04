@@ -926,9 +926,10 @@ if doc:
                 is_vip_check = cck1.checkbox("🌟 回購語氣")
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
-                save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=True,
-                                            help="把上傳的評價原圖存到指定的 Google Drive 資料夾，檔名＝「日期 評價圖-規格」。"
-                                                 "需先把該資料夾分享給服務帳號 bearjoy-bot@bearjoy-crm.iam.gserviceaccount.com（編輯者）。")
+                save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=False,
+                                            help="把上傳的評價原圖存到指定 Drive 資料夾，檔名＝「日期 評價圖-規格」。"
+                                                 "註：個人 Gmail＋服務帳號因 Google 限制無法直接存（服務帳號無儲存空間），"
+                                                 "需改用 Apps Script 中轉才會成功；目前評價原圖已備份在「評價截圖素材」分頁。")
                 # 🎁 功能1：回購優惠碼設定收進摺疊區，平時不佔版面、要用再展開
                 if "saved_repurchase" not in st.session_state:
                     try:

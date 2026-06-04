@@ -337,18 +337,19 @@ st.markdown("""
         background: #FFFFFF !important; overflow: visible !important;
     }
     div[data-testid="stExpander"] > details > summary { border-radius: 8px !important; }
-    /* ✨ 側邊欄折疊標題（💡 開啟太慢…）：字縮小、強制一排不換行、文字在方框內「上下置中」 */
+    /* ✨ 側邊欄折疊標題（💡 開啟太慢…）：字加大、一排不換行、上下＋左右都置中 */
     [data-testid="stSidebar"] div[data-testid="stExpander"] > details > summary {
-        display: flex !important; align-items: center !important;
-        min-height: 42px !important; padding-top: 0 !important; padding-bottom: 0 !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
+        min-height: 46px !important; padding-top: 0 !important; padding-bottom: 0 !important;
     }
     [data-testid="stSidebar"] div[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
-        display: flex !important; align-items: center !important; margin: 0 !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
+        flex: 1 1 auto !important; text-align: center !important; margin: 0 !important;
     }
     [data-testid="stSidebar"] div[data-testid="stExpander"] summary p {
-        font-size: 12px !important; white-space: nowrap !important; line-height: 1.2 !important;
-        overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important;
-        display: flex !important; align-items: center !important;
+        font-size: 14.5px !important; font-weight: 600 !important; white-space: nowrap !important;
+        line-height: 1.2 !important; margin: 0 !important; text-align: center !important;
+        display: flex !important; align-items: center !important; justify-content: center !important;
     }
     /* ✨ 側邊欄折疊內文：整區（含粗體標題、條列數字 1/2/3）統一同一字級、同樣行距，不雜亂 */
     [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
@@ -415,13 +416,13 @@ def base64_chunks_to_img(chunks):
     b64_str = "".join(chunks)
     return Image.open(BytesIO(base64.b64decode(b64_str)))
 
-def img_to_chunks_compact(img, maxpx=1600, quality=92):
-    """素材用：base64 切塊（畫質提高，版型A拼接更清晰；仍壓縮避免雲端肥大）。"""
+def img_to_chunks_compact(img, maxpx=2000, quality=95):
+    """素材用：base64 切塊（高畫質，版型A拼接清晰；仍壓縮避免雲端肥大）。"""
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     img.thumbnail((maxpx, maxpx), Image.Resampling.LANCZOS)
     buffered = BytesIO()
-    img.save(buffered, format="JPEG", quality=quality)
+    img.save(buffered, format="JPEG", quality=quality, subsampling=0)  # subsampling=0：文字邊緣更銳利
     b64 = base64.b64encode(buffered.getvalue()).decode()
     return [b64[i:i + 45000] for i in range(0, len(b64), 45000)]
 
@@ -639,10 +640,10 @@ def make_review_image(reviews, size=(1080, 1080), template="cards"):
 def _render_collage(images):
     """把實際上傳的評價截圖拼成一張內容圖（米底＋標題＋masonry 拼貼）。
     ✨ 滿版＋高解析：縮小邊距讓評價圖盡量填滿、BW 拉高讓文字/截圖更清晰。"""
-    BW, pad, gap = 1280, 16, 12
-    title_font = get_chinese_font(54)
-    star_font = get_chinese_font(38)
-    top = 150
+    BW, pad, gap = 1600, 18, 14
+    title_font = get_chinese_font(66)
+    star_font = get_chinese_font(46)
+    top = 180
     cols = 2 if len(images) > 1 else 1
     cell_w = int((BW - 2 * pad - (cols - 1) * gap) / cols)
     placed, col_y = [], [top] * cols
@@ -1085,14 +1086,14 @@ if doc:
 
             # 📊 功能2：好評關鍵字洞察（依規格分析）
             st.subheader("顧客最愛優點分析")
-            st.caption("依『規格（款式）』統整顧客最常稱讚的優點，直接拿去寫該款的蝦皮標題與賣點。")
+            st.caption("選規格 → 統整該款顧客最愛優點，直接拿去寫標題賣點。")
             _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
-            kw = st.text_input("🔍 規格關鍵字（品項多時先打關鍵字篩選，例：三層、壓縮）", key="insight_kw").strip()
+            kw = st.text_input("規格關鍵字（選填）", placeholder="品項多時用，例：三層、壓縮", key="insight_kw").strip()
             _specs = [s for s in _specs_all if kw.lower() in s.lower()] if kw else _specs_all
             sel_specs = st.multiselect(
-                "選規格分析（可複選，合併成『同一類』一起分析；留空＝分析上方關鍵字符合的全部款，關鍵字也空＝全部）",
+                "選規格（可複選＝合併同一類；全部留空＝分析全部）",
                 _specs, key="insight_specs")
-            if st.button("🔍 開始分析顧客最愛優點"):
+            if st.button("🔍 開始分析", use_container_width=True):
                 if not api_key:
                     st.error("需要 API 金鑰才能分析。")
                 else:
@@ -1127,7 +1128,10 @@ if doc:
                     except Exception as e:
                         st.error(f"分析失敗：{e}")
             if st.session_state.get("insight_result"):
-                st.markdown(st.session_state.insight_result)
+                _used = st.session_state.get("insight_spec_used", "全部")
+                st.markdown(f"<p style='font-size:12px;color:#A39C90;margin:6px 0 2px 2px;'>分析範圍：{_used}</p>", unsafe_allow_html=True)
+                with st.container(border=True):
+                    st.markdown(st.session_state.insight_result)
                 # 第一欄＝規格（哪一款），分析內容整段放同一格
                 df_insight = pd.DataFrame([{
                     "規格": st.session_state.get("insight_spec_used", "全部"),

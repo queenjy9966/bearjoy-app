@@ -1675,19 +1675,32 @@ if doc:
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
-                            # 大小／旋轉：精簡滑桿並排（一排）；位置用滑鼠在「同一張圖」上拖曳，即時更新、不佔版面
+                            # 🖱️ 移動／放大縮小／旋轉 三模式，全部用滑鼠/手指在「同一張圖」上拖曳，取代大小・旋轉 BAR
                             x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                             y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            c_sz, c_rot = st.columns(2)
-                            c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                            font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
-                            rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
+                            if HAS_IMG_COORDS:
+                                font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
+                                rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
+                                edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
+                                                     horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
+                            else:
+                                c_sz, c_rot = st.columns(2)
+                                c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
+                                rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
+                                cx2, cy2 = st.columns(2)
+                                cx2.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                x_pos = cx2.slider("↔️ 左右", 0, base_img.width, x_pos, key=f"x_{slot_id}")
+                                y_pos = cy2.slider("↕️ 上下", 0, base_img.height, y_pos, key=f"y_{slot_id}")
 
                             final_img_to_save, text_w, text_h = _stamp_coupon(
                                 base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
 
                             if HAS_IMG_COORDS:
-                                st.caption("👇 位置：在下方圖片上按住拖曳即可（放開定位）；大小、旋轉用上方滑桿。")
+                                hint = {"✋ 移動": "在圖上按住拖曳 → 文字移到放開處",
+                                        "🔍 放大縮小": "從文字往外拖＝放大、往中心拖＝縮小",
+                                        "🔄 旋轉": "往哪個方向拖，文字就轉向那邊"}.get(edit_mode, "")
+                                st.caption(f"目前：{edit_mode}　·　{hint}")
                                 disp_w = 320
                                 disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))
                                 try:
@@ -1699,20 +1712,31 @@ if doc:
                                     ry = coords.get("y2", coords.get("y"))
                                     if rx is not None and ry is not None:
                                         ratio = base_img.width / disp_w
-                                        nx, ny = int(rx * ratio), int(ry * ratio)
-                                        if nx != x_pos or ny != y_pos:
-                                            st.session_state[f"px_{slot_id}"] = nx
-                                            st.session_state[f"py_{slot_id}"] = ny
+                                        cxd, cyd = x_pos / ratio, y_pos / ratio
+                                        changed = False
+                                        if "移動" in edit_mode:
+                                            nx, ny = int(rx * ratio), int(ry * ratio)
+                                            if nx != x_pos or ny != y_pos:
+                                                st.session_state[f"px_{slot_id}"] = nx
+                                                st.session_state[f"py_{slot_id}"] = ny
+                                                changed = True
+                                        elif "放大" in edit_mode:
+                                            d = math.hypot(rx - cxd, ry - cyd) * ratio
+                                            ns = max(10, min(int(d / 2), 200))
+                                            if ns != font_size:
+                                                st.session_state[f"csz_{slot_id}"] = ns
+                                                changed = True
+                                        else:
+                                            ang = math.degrees(math.atan2(ry - cyd, rx - cxd))
+                                            nr = max(-180, min(int(round(ang)), 180))
+                                            if nr != rotation_angle:
+                                                st.session_state[f"crot_{slot_id}"] = nr
+                                                changed = True
+                                        if changed:
                                             st.rerun()
                             else:
-                                cx2, cy2 = st.columns(2)
-                                cx2.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                                x_pos = cx2.slider("↔️ 左右", 0, base_img.width, x_pos, key=f"x_{slot_id}")
-                                y_pos = cy2.slider("↕️ 上下", 0, base_img.height, y_pos, key=f"y_{slot_id}")
                                 st.session_state[f"px_{slot_id}"] = x_pos
                                 st.session_state[f"py_{slot_id}"] = y_pos
-                                final_img_to_save, text_w, text_h = _stamp_coupon(
-                                    base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
                                 st.image(final_img_to_save, width=320)
                         else:
                             st.markdown("**👇 原始圖片預覽:**")

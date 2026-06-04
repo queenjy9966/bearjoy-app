@@ -453,27 +453,19 @@ def write_df_to_sheet(doc, title, df):
         return None
 
 def _review_spec(content):
-    """從評價內容抓出『規格/款式』。容錯處理多種格式：
-    - 半形或全形冒號（規格: / 規格：）
-    - 規格 可能不在第一行（跨行搜尋）
-    - 款式常放在中括號內，例『規格: [三層款 可拆卸 十合一]黑色』→ 取『三層款 可拆卸 十合一』
-    - 自家格式『規格：xxx｜評價…』→ 取 ｜ 前段
-    抓不到回空字串。"""
+    """從評價內容抓出『規格』。整串都算規格（含中括號與顏色），不是只有【】內的字。
+    容錯：半形或全形冒號（規格: / 規格：）、規格可能不在第一行（跨行搜尋）。
+    取『規格:』後面到第一個分隔符（｜ / | / 逗號 / 換行）為止的完整文字。抓不到回空字串。"""
     s = str(content)
     m = re.search(r'規格\s*[：:]\s*([^\n]+)', s)
     if not m:
         return ""
-    val = m.group(1).strip()
-    if "｜" in val:                       # 自家格式：規格：xxx｜
-        return val.split("｜", 1)[0].strip()[:30]
-    mb = re.search(r'\[([^\]]+)\]', val)  # 蝦皮款式多在中括號內
-    if mb:
-        return mb.group(1).strip()[:30]
-    for sep in ["|", "，", ",", "。", " "]:
-        if sep in val:
-            val = val.split(sep, 1)[0]
-            break
-    return val.strip()[:30]
+    val = m.group(1)
+    # 切到最早出現的分隔符（避免把後面重複或別欄的字也吃進來）
+    idxs = [val.find(c) for c in ["｜", "|", "，", ","] if c in val]
+    if idxs:
+        val = val[:min(idxs)]
+    return val.strip().rstrip("，,、 ")[:40]
 
 def _excel_align_left_top(ws):
     """把 openpyxl 工作表每一格設成靠左、靠上對齊（並自動換行）。"""

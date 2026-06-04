@@ -343,6 +343,18 @@ st.markdown("""
             min-width: 100% !important;
             max-width: 100% !important;
         }
+        /* ✨ 手機版：一般欄位維持「並排不堆疊」（折價券版位、拉桿組除外）→ 各種按鈕/勾選同一排 */
+        div[data-testid="stHorizontalBlock"]:not(:has(.coupon-grid-anchor)):not(:has(.slider-pair-anchor)) {
+            flex-wrap: nowrap !important;
+            gap: 0.4rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]:not(:has(.coupon-grid-anchor)):not(:has(.slider-pair-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+            min-width: 0 !important;
+            flex: 1 1 0 !important;
+        }
+        /* ✨ 手機版：分頁標籤縮小間距、字略小，三個分頁一頁就看完整 */
+        [data-testid="stTabs"] button[role="tab"] { padding: 6px 6px !important; font-size: 12.5px !important; }
+        [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 4px !important; }
     }
 
     /* ========================================================= */
@@ -352,15 +364,17 @@ st.markdown("""
     .stButton > button, .stDownloadButton > button {
         background-color: #798571 !important; color: #FFFFFF !important;
         border: none !important; border-radius: 6px !important;
-        height: 42px !important; min-height: 42px !important;
-        /* ✨ 全站按鈕寬度一致：固定 240px；空間不足時最多撐滿容器，不會破版 */
-        width: 240px !important; max-width: 100% !important;
-        font-size: 14px !important; font-weight: 600 !important;
-        padding: 0 16px !important;
+        height: 38px !important; min-height: 38px !important;
+        /* ✨ 按鈕變小變窄：寬度依文字自適應(不再長條)，最小 90px、最寬撐滿容器；字多的自然較長 */
+        width: auto !important; min-width: 90px !important; max-width: 100% !important;
+        font-size: 13.5px !important; font-weight: 600 !important;
+        padding: 0 14px !important;
         display: inline-flex !important; align-items: center !important; justify-content: center !important;
-        text-align: center !important; line-height: 1.2 !important;
+        text-align: center !important; line-height: 1.2 !important; white-space: nowrap !important;
         box-shadow: none !important;
     }
+    /* 按鈕在欄位中置中（內容自適應寬度後不靠左） */
+    .stButton, .stDownloadButton { display: flex !important; justify-content: center !important; }
     .stButton > button:hover, .stDownloadButton > button:hover {
         background-color: #687560 !important; color: #FFFFFF !important;
     }
@@ -1367,8 +1381,8 @@ if doc:
                     "版型C：大字引用感",
                 ], key="rev_tpl")
                 size_label = c_size.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
-                rev_n = c_n.number_input("自動取幾筆", min_value=1, max_value=12, value=3, step=1,
-                                         key="rev_img_n", help="沒手動勾選評價時才會用到")
+                rev_n = c_n.number_input("或 自動取幾筆", min_value=1, max_value=12, value=3, step=1,
+                                         key="rev_img_n", help="與『手動勾選評價』二擇一：沒手動勾選時，才會自動取最新這幾筆")
                 target_size = SIZE_PRESETS[size_label]
                 if target_size is None:
                     cw, ch = st.columns(2)
@@ -1689,7 +1703,7 @@ if doc:
                         base_img.save(buf, format="PNG")
                         st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
                     with c_hint:
-                        st.markdown("<p style='font-size:13.5px; color:#8A8275; margin:0; height:42px; display:flex; align-items:center; white-space:nowrap;'>💡 手機版可「長按圖片」儲存</p>", unsafe_allow_html=True)
+                        st.markdown("<p style='font-size:13px; color:#8A8275; margin:0; height:38px; display:flex; align-items:center; white-space:nowrap;'>💡 長按圖片可儲存</p>", unsafe_allow_html=True)
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 
@@ -1743,7 +1757,7 @@ if doc:
                             # 操作方式：🎨 畫布直接編輯（Canva 式）／三模式拖曳／拉桿
                             x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                             y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            use_canvas = HAS_CANVAS  # 有畫布元件就直接用畫布
+                            use_canvas = False  # 畫布底圖在使用者裝置渲染不出來(白底)，改用會顯示圖片的拖曳編輯器
                             if use_canvas or HAS_IMG_COORDS:
                                 font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
                                 rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
@@ -1858,8 +1872,8 @@ if doc:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)
                             
-                        # 編輯文字 / 完成編輯 ＋ 確認儲存：縮窄併排同一排
-                        if enable_text and base_img and HAS_CANVAS:
+                        # 編輯文字 / 完成編輯 ＋ 確認儲存：縮窄併排同一排（僅畫布模式才有編輯鈕）
+                        if enable_text and base_img and use_canvas:
                             _bc1, _bc2 = st.columns(2)
                             if st.session_state.get("edit_slot") == slot_id:
                                 if _bc1.button("↩ 完成編輯", key=f"endcv_{slot_id}", use_container_width=True):

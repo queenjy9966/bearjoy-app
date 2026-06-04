@@ -532,13 +532,16 @@ def _safe_filename(s):
     return (s[:80] or "未命名")
 
 def section_block(emoji, title, desc=""):
-    """大區塊標題色塊：在頁面上用米色色塊＋左色條清楚區分各大功能。"""
-    d = f"<div style='font-size:11.5px;color:#8A8275;margin-top:3px;line-height:1.4;'>{desc}</div>" if desc else ""
+    """大區塊標題色塊：米色色塊＋左色條，只放標題；補充說明收進可點開的「ⓘ 說明」，文字完整不截斷。"""
     st.markdown(
         f"<div style='background:#EFEBE2;border-left:6px solid #B7A98C;padding:11px 16px;"
-        f"border-radius:10px;margin:16px 0 12px 0;'>"
-        f"<span style='font-size:17px;font-weight:bold;color:#4A4238;letter-spacing:.5px;'>{emoji} {title}</span>{d}</div>",
+        f"border-radius:10px;margin:4px 0 10px 0;'>"
+        f"<span style='font-size:17px;font-weight:bold;color:#4A4238;letter-spacing:.5px;'>{emoji} {title}</span></div>",
         unsafe_allow_html=True)
+    if desc:
+        with st.popover("ⓘ 說明"):
+            st.markdown(f"<div style='font-size:13.5px;color:#4A4238;line-height:1.6;max-width:520px;'>{desc}</div>",
+                        unsafe_allow_html=True)
 
 def upload_img_to_drive(img, filename, folder_id=DRIVE_FOLDER_ID):
     """把 PIL 圖片上傳到指定 Google Drive 資料夾；回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
@@ -1361,10 +1364,10 @@ if doc:
                 def _mat_spec(r):
                     _, a, sp = _mat_meta(r[0])
                     return sp or acc2spec.get(a, "")
-                # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）
+                # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：選項用全部規格清單，4 個款都會出現
                 fa1, fa2 = st.columns(2)
                 ma_specs = fa1.multiselect("選規格（可複選；留空＝全部）",
-                                           sorted({_mat_spec(r) for r in mat_pool if _mat_spec(r)}), key="matimg_specs")
+                                           _specs_all, key="matimg_specs")
                 ma_kw = fa2.text_input("或用關鍵字篩選", placeholder="例：三層", key="matimg_kw").strip()
                 def _mat_match(r):
                     sp = _mat_spec(r)
@@ -1469,8 +1472,8 @@ if doc:
                 except Exception as e:
                     st.error(f"產生失敗：{e}")
 
-            # 📥 大區塊三：下載評價原圖（給美編用）
-            section_block("📥", "下載評價原圖（PNG，給美編用）", "把已保存的顧客評價原圖打包成 ZIP，每張 PNG 檔名＝「日期 評價圖-規格」。")
+            # 📥 打包下載評價原圖（歸在「生成好評圖」區內，給美編用）
+            st.markdown("<p style='font-size:12.5px;color:#8A8275;margin:10px 0 4px 2px;'>📥 想拿原圖去美編？打包下載（每張 PNG 檔名＝日期 評價圖-規格）</p>", unsafe_allow_html=True)
             if st.button("📦 打包下載原圖（ZIP）", use_container_width=True):
                 try:
                     import zipfile

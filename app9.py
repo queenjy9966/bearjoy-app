@@ -945,7 +945,7 @@ if doc:
                     except Exception:
                         st.session_state.saved_repurchase = ("", "")
                 _saved_code, _saved_offer = st.session_state.saved_repurchase
-                with st.expander("🎁 回購優惠碼（選填，會附在私訊結尾）", expanded=bool(_saved_code)):
+                with st.expander("🎁 回購優惠碼（選填）", expanded=bool(_saved_code)):
                     repurchase_code = st.text_input("回購優惠碼", value=_saved_code, placeholder="例如 BEARJOY50")
                     repurchase_offer = st.text_input("優惠說明", value=_saved_offer, placeholder="例如 全館滿299折20")
                     if st.button("💾 設為預設範例", use_container_width=True):

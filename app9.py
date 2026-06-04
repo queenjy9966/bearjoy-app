@@ -1454,8 +1454,8 @@ if doc:
                         else:
                             st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
 
-                gcol, zcol = st.columns([3, 2])
-                gen_clicked = gcol.button("✨ 產生好評圖", type="primary", use_container_width=True)
+                gcol, zcol = st.columns(2)
+                gen_clicked = gcol.button("✨ 產生好評圖", use_container_width=True)
                 zip_clicked = zcol.button("📦 原圖打包(ZIP)", use_container_width=True,
                                           help="想拿原圖去美編？按這裡把已保存的顧客評價原圖打包成 ZIP 下載，每張 PNG 檔名＝「日期 評價圖-規格」。")
                 if gen_clicked:

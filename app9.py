@@ -555,7 +555,7 @@ def _text_w(draw, text, font):
 
 def _render_content(reviews, template):
     """回傳一張內容圖（米底），之後再縮放置中到目標尺寸。
-    ✨ 每則評價：星星、帳號、內文都『置中於文字框』；規格已併入評價內容一起顯示。
+    ✨ 大標題置中；每則評價的星星、帳號、內文一律『靠左對齊』；規格已併入評價內容一起顯示。
     ✨ 卡片高度用『實際量測的文字高度』決定，文字一定包在框內、不會超出。"""
     BW, pad = 1000, 50
     stars = "★ ★ ★ ★ ★"
@@ -602,14 +602,13 @@ def _render_content(reviews, template):
                 d.rounded_rectangle([pad, y, BW - pad, cb], radius=22, fill="#FFFFFF", outline="#E6E2D8", width=2)
             except Exception:
                 d.rectangle([pad, y, BW - pad, cb], fill="#FFFFFF", outline="#E6E2D8")
+        x0 = pad + 36           # 卡片左內留白
         ty = y + pads_v
-        # 置中：星星 + 帳號 + 內文
-        d.text(((BW - _text_w(d, stars, star_font)) / 2, ty), stars, font=star_font, fill="#E0A96D")
-        acc_t = f"@{acc}"
-        d.text(((BW - _text_w(d, acc_t, acc_font)) / 2, ty + star_h), acc_t, font=acc_font, fill="#A0998C")
-        bw, _ = measure(body, body_font)
-        d.multiline_text(((BW - bw) / 2, ty + star_h + acc_h + 10), body,
-                         font=body_font, fill="#4A4238", spacing=line_gap, align="center")
+        # 靠左：星星 + 帳號 + 內文（大標題仍置中，於上方已畫）
+        d.text((x0, ty), stars, font=star_font, fill="#E0A96D")
+        d.text((x0, ty + star_h), f"@{acc}", font=acc_font, fill="#A0998C")
+        d.multiline_text((x0, ty + star_h + acc_h + 10), body,
+                         font=body_font, fill="#4A4238", spacing=line_gap, align="left")
         y = cb + gap_between
     return img
 
@@ -1190,22 +1189,60 @@ if doc:
                 cust_w = cw.number_input("寬 (px)", 300, 4000, 1080, 20, key="rev_cw")
                 cust_h = ch.number_input("高 (px)", 300, 4000, 1080, 20, key="rev_ch")
                 target_size = (int(cust_w), int(cust_h))
+
+            # 🖼️ 版型A：挑選要拼接的真實評價截圖（縮圖；數量多時可在框內捲動）
+            mat_pool = []
+            if template_label.startswith("版型A"):
+                if "mat_pool" not in st.session_state or st.session_state.get("refresh_mat_pool"):
+                    try:
+                        _mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
+                        _mat = [r for r in _mat if len(r) > 1 and r[0]]
+                        st.session_state.mat_pool = list(reversed(_mat))[:40]  # 最新40張(縮圖解碼較重故設上限)
+                    except Exception:
+                        st.session_state.mat_pool = []
+                    st.session_state.refresh_mat_pool = False
+                mat_pool = st.session_state.mat_pool
+                with st.expander("🖼️ 挑選要拼接的真實評價截圖（不挑＝用最新幾張）", expanded=True):
+                    if st.button("🔄 重新整理截圖清單", key="refresh_mat"):
+                        st.session_state.refresh_mat_pool = True
+                        st.rerun()
+                    if not mat_pool:
+                        st.caption("還沒有已保存的評價截圖。請到「批次評價處理」勾選『💾 保存截圖』並處理幾筆。")
+                    else:
+                        st.caption(f"共 {len(mat_pool)} 張（最新在前）。勾選想要的；不勾就用最新 {int(rev_n)} 張。框內可上下捲動。")
+                        thumbs = st.session_state.setdefault("_mat_thumbs", {})
+                        with st.container(height=330):
+                            cols = st.columns(3)
+                            for idx, r in enumerate(mat_pool):
+                                with cols[idx % 3]:
+                                    th = thumbs.get(r[0])
+                                    if th is None:
+                                        try:
+                                            im = base64_chunks_to_img([c for c in r[1:] if c])
+                                            im.thumbnail((220, 220))
+                                            th = im
+                                        except Exception:
+                                            th = False
+                                        thumbs[r[0]] = th
+                                    if th:
+                                        st.image(th, use_container_width=True)
+                                    st.checkbox(f"選 #{idx + 1}", key=f"matpick_{idx}")
+
             if st.button("✨ 產生好評圖", type="primary"):
                 try:
                     card = None
                     if template_label.startswith("版型A"):
-                        # 版型A：用實際上傳的評價截圖拼接
-                        mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
-                        mat = [r for r in mat if len(r) > 1 and r[0]]
-                        mat = mat[::-1][:int(rev_n)]
+                        # 版型A：用實際評價截圖拼接；有勾選就用勾的，沒勾就用最新幾張
+                        sel_idx = [i for i in range(len(mat_pool)) if st.session_state.get(f"matpick_{i}")]
+                        chosen = [mat_pool[i] for i in sel_idx] if sel_idx else mat_pool[:int(rev_n)]
                         imgs = []
-                        for r in mat:
+                        for r in chosen:
                             try:
                                 imgs.append(base64_chunks_to_img([c for c in r[1:] if c]))
                             except Exception:
                                 continue
                         if not imgs:
-                            st.info("還沒有已保存的評價截圖。請先到「批次評價處理」勾選『保存原始評價截圖』並處理幾筆，再回來生成。")
+                            st.info("還沒有已保存的評價截圖。請先到「批次評價處理」勾選『💾 保存截圖』並處理幾筆，再回來生成。")
                         else:
                             card = make_collage_image(imgs, size=target_size)
                     else:

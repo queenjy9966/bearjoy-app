@@ -284,21 +284,24 @@ st.markdown("""
         padding: 0 !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-txt):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) {
-        flex: 0 0 56px !important;
-        width: 56px !important;
-        min-width: 56px !important;
-        max-width: 56px !important;
+        flex: 0 0 48px !important;
+        width: 48px !important;
+        min-width: 48px !important;
+        max-width: 48px !important;
         padding: 0 !important;
     }
 
-    div[data-testid="stTextArea"] label, div[data-testid="stColorPicker"] label {
+    div[data-testid="stTextArea"] label, div[data-testid="stTextInput"] label, div[data-testid="stColorPicker"] label {
         font-size: 13px !important; font-weight: bold !important; color: #798571 !important;
         margin-bottom: 4px !important; padding: 0 !important; white-space: nowrap !important;
+        height: 20px !important; line-height: 20px !important;
     }
-    div[data-testid="stTextArea"] textarea { min-height: 52px !important; height: 52px !important; padding: 6px 10px !important; }
-    /* 顏色色塊＝正方形，高度與左邊壓印文字框一致(52px)、底部對齊 */
+    /* 壓印文字框（單行）高度 42px */
+    div[data-testid="stTextInput"] input { height: 42px !important; padding: 6px 10px !important; }
+    div[data-testid="stTextArea"] textarea { min-height: 42px !important; height: 42px !important; padding: 6px 10px !important; }
+    /* 顏色色塊＝正方形，高度與左邊壓印文字框一致(42px)、底部對齊同一排 */
     div[data-testid="stColorPicker"] { margin-top: 0px !important; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start;}
-    div[data-testid="stColorPicker"] div[role="button"] { width: 52px !important; height: 52px !important; min-width: 52px !important; padding: 0 !important; border-radius: 6px !important; }
+    div[data-testid="stColorPicker"] div[role="button"] { width: 42px !important; height: 42px !important; min-width: 42px !important; padding: 0 !important; border-radius: 6px !important; }
 
     /* ========================================================= */
     /* 拉桿(BAR)對齊優化 */
@@ -1733,7 +1736,7 @@ if doc:
                             with c_txt:
                                 # 埋入隱形錨點供 CSS 辨識
                                 st.markdown('<span class="inline-row-txt" style="display:none;"></span>', unsafe_allow_html=True)
-                                text_input = st.text_area("✍️ 壓印文字（日期）", value=default_coupon_txt, key=f"txt_{slot_id}")
+                                text_input = st.text_input("✍️ 壓印文字（日期）", value=default_coupon_txt, key=f"txt_{slot_id}")
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 

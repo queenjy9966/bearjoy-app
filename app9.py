@@ -20,13 +20,6 @@ try:
 except Exception:
     HAS_IMG_COORDS = False
 
-# 畫布編輯元件：可用滑鼠/手指「拖曳移動＋拉角縮放＋轉角旋轉」文字（沒裝成功就退回拉桿）
-try:
-    from streamlit_drawable_canvas import st_canvas
-    HAS_CANVAS = True
-except Exception:
-    HAS_CANVAS = False
-
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -421,8 +414,8 @@ def base64_chunks_to_img(chunks):
     b64_str = "".join(chunks)
     return Image.open(BytesIO(base64.b64decode(b64_str)))
 
-def img_to_chunks_compact(img, maxpx=1280, quality=80):
-    """素材用：較小檔的 base64 切塊，避免雲端肥大。"""
+def img_to_chunks_compact(img, maxpx=1600, quality=92):
+    """素材用：base64 切塊（畫質提高，版型A拼接更清晰；仍壓縮避免雲端肥大）。"""
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     img.thumbnail((maxpx, maxpx), Image.Resampling.LANCZOS)
@@ -457,6 +450,13 @@ def write_df_to_sheet(doc, title, df):
         return f"{doc.url}#gid={ws.id}"
     except Exception:
         return None
+
+def _review_spec(content):
+    """從『規格：xxx｜評價…』的內容開頭取出規格；沒有規格就回空字串。"""
+    s = str(content).strip()
+    if s.startswith("規格："):
+        return s[3:].split("｜", 1)[0].strip()
+    return ""
 
 def _excel_align_left_top(ws):
     """把 openpyxl 工作表每一格設成靠左、靠上對齊（並自動換行）。"""
@@ -629,11 +629,12 @@ def make_review_image(reviews, size=(1080, 1080), template="cards"):
     return canvas
 
 def _render_collage(images):
-    """把實際上傳的評價截圖拼成一張內容圖（米底＋標題＋masonry 拼貼）。"""
-    BW, pad, gap = 1000, 45, 24
-    title_font = get_chinese_font(48)
-    star_font = get_chinese_font(34)
-    top = 170
+    """把實際上傳的評價截圖拼成一張內容圖（米底＋標題＋masonry 拼貼）。
+    ✨ 滿版＋高解析：縮小邊距讓評價圖盡量填滿、BW 拉高讓文字/截圖更清晰。"""
+    BW, pad, gap = 1280, 16, 12
+    title_font = get_chinese_font(54)
+    star_font = get_chinese_font(38)
+    top = 150
     cols = 2 if len(images) > 1 else 1
     cell_w = int((BW - 2 * pad - (cols - 1) * gap) / cols)
     placed, col_y = [], [top] * cols
@@ -665,7 +666,7 @@ def make_collage_image(images, size=(1080, 1080)):
     TW, TH = size
     content = _render_collage(images)
     canvas = Image.new("RGB", (TW, TH), "#FAF8F5")
-    margin = int(min(TW, TH) * 0.04)
+    margin = int(min(TW, TH) * 0.015)  # 邊距縮小，評價圖更滿版
     aw, ah = TW - margin * 2, TH - margin * 2
     scale = aw / content.width
     if content.height * scale > ah:
@@ -864,7 +865,7 @@ if doc:
                     [REVIEW]
                     (評價內容)
                     [SPEC]
-                    (顧客實際購買的規格/款式，讀圖片中「規格」欄位的文字；若圖片沒有顯示規格就只寫「無」)
+                    (顧客購買的規格/款式：務必從圖片中「規格」或商品變體欄位「完整讀出」，例如「三層款」「壓縮款」「標準款」「304接水盤」等。除非圖片真的完全沒有任何規格資訊，否則一律要填，不可留空、不可只寫「無」)
                     [PUBLIC]
                     (賣場評價回覆)
                     [PRIVATE]
@@ -1063,19 +1064,34 @@ if doc:
                     st.error(f"讀取失敗：{e}")
 
         with tab3:
-            # 📊 功能2：好評關鍵字洞察
+            # 共用：載入文字評價清單（最新在前）；分析與好評圖挑選都用這份，避免重複讀取
+            if "review_pool" not in st.session_state or st.session_state.get("refresh_review_pool"):
+                try:
+                    _hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
+                    _rows = [r for r in _hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
+                    st.session_state.review_pool = list(reversed(_rows))
+                except Exception:
+                    st.session_state.review_pool = []
+                st.session_state.refresh_review_pool = False
+            review_pool = st.session_state.review_pool
+
+            # 📊 功能2：好評關鍵字洞察（依規格分析）
             st.subheader("顧客最愛優點分析")
-            st.caption("從你所有評價紀錄中，統整顧客最常稱讚的優點，直接拿去寫蝦皮標題與賣點。")
+            st.caption("依『規格（款式）』統整顧客最常稱讚的優點，直接拿去寫該款的蝦皮標題與賣點。")
+            _specs = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
+            sel_spec = st.selectbox("選規格分析（同款式一起分析；選『全部』＝不分款）",
+                                    ["全部"] + _specs, key="insight_spec")
             if st.button("🔍 開始分析顧客最愛優點"):
                 if not api_key:
                     st.error("需要 API 金鑰才能分析。")
                 else:
                     try:
-                        hist = get_or_create_ws(doc, "回覆紀錄").get_all_records()
-                        reviews = [str(r.get("原始評價內容", "")).strip() for r in hist
-                                   if str(r.get("原始評價內容", "")).strip() and str(r.get("原始評價內容", "")).strip() != "解析失敗"]
+                        if sel_spec == "全部":
+                            reviews = [r[2] for r in review_pool]
+                        else:
+                            reviews = [r[2] for r in review_pool if _review_spec(r[2]) == sel_spec]
                         if not reviews:
-                            st.info("目前還沒有評價紀錄可分析，先去處理幾筆好評吧！")
+                            st.info("這個規格目前還沒有評價可分析。")
                         else:
                             with st.spinner(f"AI 正在分析 {len(reviews)} 筆評價..."):
                                 joined = "\n".join(f"- {r}" for r in reviews[:200])
@@ -1089,20 +1105,16 @@ if doc:
                                 result = gemini_generate(api_key, [prompt])
                             if result:
                                 st.session_state.insight_result = result
+                                st.session_state.insight_spec_used = sel_spec
                             else:
                                 st.error("分析失敗，請稍後再試（可能是 AI 額度或網路問題）。")
                     except Exception as e:
                         st.error(f"分析失敗：{e}")
             if st.session_state.get("insight_result"):
                 st.markdown(st.session_state.insight_result)
-                # 📌 多一欄「品名」才知道是哪一類商品（不用太細，一類產品填一個就好）；分析內容整段放同一格
-                insight_product = st.text_input(
-                    "品名／產品線（會寫進 Excel 第一欄，填產品線就好，例：旅行收納袋）",
-                    key="insight_product",
-                    help="一個銷售頁有多款（三層款/壓縮款/標準款）時，這裡只填『產品線』，各款差異不用寫這裡——"
-                         "因為每筆評價內容已自動帶到顧客買的『規格』，要細分時看評價內的規格即可。")
+                # 第一欄＝規格（哪一款），分析內容整段放同一格
                 df_insight = pd.DataFrame([{
-                    "品名": insight_product.strip() if insight_product.strip() else "（未填品名）",
+                    "規格": st.session_state.get("insight_spec_used", "全部"),
                     "顧客優點分析": str(st.session_state.insight_result).strip(),
                 }])
                 cin1, cin2 = st.columns(2)
@@ -1143,28 +1155,25 @@ if doc:
                 "版型C：大字引用感",
             ], key="rev_tpl")
 
-            # ✋ 讓你自己挑要放哪幾筆評價（版型B/C 用文字評價；不挑＝自動用最新筆數）
-            if "review_pool" not in st.session_state or st.session_state.get("refresh_review_pool"):
-                try:
-                    _hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
-                    _rows = [r for r in _hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
-                    st.session_state.review_pool = list(reversed(_rows))  # 最新在前
-                except Exception:
-                    st.session_state.review_pool = []
-                st.session_state.refresh_review_pool = False
-            review_pool = st.session_state.review_pool
-            with st.expander("✋ 自己挑要放哪幾筆好評（版型B/C；不挑就用上面的最新筆數）"):
+            # ✋ 自己挑要放哪幾筆評價（版型B/C；勾選後可看完整內容；不挑＝自動用最新、且只取有規格的）
+            with st.expander("✋ 自己挑要放哪幾筆好評（版型B/C；可看完整內容）"):
                 if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
                     st.session_state.refresh_review_pool = True
                     st.rerun()
                 if review_pool:
                     def _rev_label(i):
                         r = review_pool[i]
-                        snippet = " ".join(str(r[2]).split())[:24]
-                        return f"{r[1]}｜{snippet}…"
+                        spec = _review_spec(r[2])
+                        snippet = " ".join(str(r[2]).split())[:30]
+                        return f"{r[1]} ［{spec or '無規格'}］ {snippet}…"
                     st.multiselect("勾選要做成素材的評價（可多選；勾了就以這些為準）",
                                    options=list(range(len(review_pool))),
                                    format_func=_rev_label, key="picked_reviews")
+                    # 顯示已勾選評價的完整內容，挑的時候看得到全文
+                    for i in st.session_state.get("picked_reviews", []):
+                        if i < len(review_pool):
+                            r = review_pool[i]
+                            st.markdown(f"- **{r[1]}**：{r[2]}")
                 else:
                     st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
             SIZE_PRESETS = {
@@ -1201,12 +1210,13 @@ if doc:
                             card = make_collage_image(imgs, size=target_size)
                     else:
                         # 版型B/C：用 AI 解析後的文字做圖
-                        # 有勾選就用勾選的；沒勾就用最新 rev_n 筆（評價內容已含規格）
+                        # 有勾選就用勾選的；沒勾就自動取最新、且「只取有規格」的（確保每則都有規格、也避免新舊重複）
                         picked = [i for i in st.session_state.get("picked_reviews", []) if i < len(review_pool)]
                         if picked:
                             rows = [review_pool[i] for i in picked]
                         else:
-                            rows = review_pool[:int(rev_n)]
+                            spec_rows = [r for r in review_pool if _review_spec(r[2])]
+                            rows = (spec_rows or review_pool)[:int(rev_n)]
                         reviews = [(r[1], r[2]) for r in rows]
                         if not reviews:
                             st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
@@ -1361,9 +1371,6 @@ if doc:
 
                 if base_img:
                     with st.expander("✏️ 想加日期/文字再點開（不需要可略過）", expanded=False):
-                        if not new_file:
-                            st.caption("⚠️ 目前使用的是舊圖，建議上傳「乾淨空白底圖」再重新壓印字體。")
-                        
                         enable_text = st.checkbox("✒️ 啟動文字壓印", value=True, key=f"en_txt_{slot_id}")
                         final_img_to_save = base_img 
                         
@@ -1394,29 +1401,18 @@ if doc:
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
-                            # 🎚️ 畫布抓不到文字時可勾此切回拉桿（沒有畫布元件就一律拉桿）
-                            use_bars = (not HAS_CANVAS) or st.checkbox(
-                                "🎚️ 改用拉桿微調（畫布抓不到文字時勾這裡）", key=f"usebars_{slot_id}")
-
-                            if use_bars:
-                                c_sz, c_rot = st.columns(2)
-                                c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                                font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
-                                rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
-                                if HAS_IMG_COORDS:
-                                    x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
-                                    y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                                else:
-                                    c_x, c_y = st.columns(2)
-                                    c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                                    x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
-                                    y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
-                            else:
-                                # 畫布模式：大小/旋轉/位置都由畫布操作，存在非 widget 的 session 鍵
-                                font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
-                                rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
+                            c_sz, c_rot = st.columns(2)
+                            c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                            font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
+                            rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
+                            if HAS_IMG_COORDS:
                                 x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                                 y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
+                            else:
+                                c_x, c_y = st.columns(2)
+                                c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
+                                y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
 
                             preview_img = base_img.copy().convert("RGBA")
                             font = get_chinese_font(font_size)
@@ -1446,70 +1442,7 @@ if doc:
                             preview_img.alpha_composite(rotated_txt, (paste_x, paste_y))
                             final_img_to_save = preview_img.convert("RGB")
 
-                            if not use_bars:
-                                # 🖱️ 畫布編輯：拖曳=移動、拉四角=縮放、轉上方圓點=旋轉；放開才套用（過程不閃）
-                                st.markdown("**👇 用滑鼠／手指操作：先點一下文字選取它，再拖曳移動、拉四角縮放、轉上方圓點旋轉**")
-                                disp_w = 340
-                                cscale = disp_w / base_img.width
-                                disp_h = max(1, int(base_img.height * cscale))
-                                bg_disp = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
-                                # 文字做成「未旋轉」透明 PNG，當作畫布上可操作的物件
-                                cfont = get_chinese_font(max(10, int(font_size * cscale)))
-                                _dd = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-                                try:
-                                    _bb = _dd.multiline_textbbox((0, 0), text_input or "日期", font=cfont, align="center")
-                                    tw_, th_ = max(8, _bb[2] - _bb[0]), max(8, _bb[3] - _bb[1])
-                                except Exception:
-                                    tw_, th_ = 90, 44
-                                _p = 8
-                                txt_png = Image.new("RGBA", (tw_ + _p * 2, th_ + _p * 2), (255, 255, 255, 0))
-                                ImageDraw.Draw(txt_png).multiline_text((_p, _p), text_input or "日期", fill=text_color, font=cfont, align="center")
-                                _b = BytesIO(); txt_png.save(_b, format="PNG")
-                                data_url = "data:image/png;base64," + base64.b64encode(_b.getvalue()).decode()
-                                ow, oh = txt_png.size
-                                left0 = x_pos * cscale - ow / 2
-                                top0 = y_pos * cscale - oh / 2
-                                init_drawing = {"version": "4.4.0", "objects": [{
-                                    "type": "image", "src": data_url,
-                                    "left": float(left0), "top": float(top0),
-                                    "width": ow, "height": oh, "scaleX": 1.0, "scaleY": 1.0,
-                                    "angle": float(rotation_angle),
-                                    "selectable": True, "hasControls": True, "hasBorders": True,
-                                }]}
-                                try:
-                                    cres = st_canvas(
-                                        background_image=bg_disp, initial_drawing=init_drawing,
-                                        drawing_mode="transform", update_streamlit=True,
-                                        height=disp_h, width=disp_w, display_toolbar=False,
-                                        key=f"cv_{slot_id}")
-                                except Exception:
-                                    cres = None
-                                if cres is not None and getattr(cres, "json_data", None):
-                                    objs = cres.json_data.get("objects", [])
-                                    if objs:
-                                        o = objs[0]
-                                        sx = float(o.get("scaleX", 1) or 1)
-                                        sy = float(o.get("scaleY", 1) or 1)
-                                        ang = float(o.get("angle", 0) or 0)
-                                        ow2 = float(o.get("width", ow) or ow)
-                                        oh2 = float(o.get("height", oh) or oh)
-                                        l2 = float(o.get("left", left0)); t2 = float(o.get("top", top0))
-                                        cx = l2 + (ow2 * sx) / 2; cy = t2 + (oh2 * sy) / 2
-                                        new_x = max(0, min(int(cx / cscale), base_img.width))
-                                        new_y = max(0, min(int(cy / cscale), base_img.height))
-                                        new_size = max(10, min(int(round(font_size * sx)), 200))
-                                        na = ((ang + 180) % 360) - 180
-                                        new_rot = max(-180, min(int(round(na)), 180))
-                                        if (abs(new_x - x_pos) >= 2 or abs(new_y - y_pos) >= 2
-                                                or new_size != font_size or new_rot != rotation_angle):
-                                            st.session_state[f"px_{slot_id}"] = new_x
-                                            st.session_state[f"py_{slot_id}"] = new_y
-                                            st.session_state[f"csz_{slot_id}"] = new_size
-                                            st.session_state[f"crot_{slot_id}"] = new_rot
-                                            st.rerun()
-                                st.caption("拖曳=移動、拉四角=縮放、轉上方圓點=旋轉；放開後即套用並記住（過程不會閃）。")
-                            elif HAS_IMG_COORDS:
-                                st.markdown("**👇 在圖片上按住拖曳，放開處即為日期位置：**")
+                            if HAS_IMG_COORDS:
                                 disp_w = 320
                                 disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))
                                 try:
@@ -1526,10 +1459,10 @@ if doc:
                                             st.session_state[f"px_{slot_id}"] = nx
                                             st.session_state[f"py_{slot_id}"] = ny
                                             st.rerun()
-                                st.caption("不必點到文字，圖片任一處按住拖曳即可；放開後就是最終效果。")
+                                st.caption("位置：在圖片上按住拖曳即可（放開定位）。大小、旋轉用上方拉桿。")
                             else:
-                                st.markdown("**👇 壓印預覽（用上方拉桿微調位置）：**")
                                 st.image(_draw_marker(final_img_to_save, x_pos, y_pos), width=320)
+                                st.caption("紅十字＝文字位置，用上方拉桿調整位置/大小/旋轉。")
                         else:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)

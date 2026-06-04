@@ -1437,9 +1437,6 @@ if doc:
                         return True
                     mat_filtered = [(i, r) for i, r in enumerate(mat_pool) if _mat_match(r)]
                     with st.expander("🖼️ 挑選要拼接的截圖（不挑＝用最新幾張）", expanded=True):
-                        if st.button("🔄 重新整理截圖", key="refresh_mat"):
-                            st.session_state.refresh_mat_pool = True
-                            st.rerun()
                         if not mat_filtered:
                             st.caption("這個規格／關鍵字下沒有截圖，換個條件；或先到「批次評價處理」勾『💾 保存截圖』。")
                         else:
@@ -1472,9 +1469,6 @@ if doc:
                     else:
                         pool_for_img = review_pool
                     with st.expander("✋ 自己挑要放哪幾筆好評（每筆顯示完整內容）", expanded=False):
-                        if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
-                            st.session_state.refresh_review_pool = True
-                            st.rerun()
                         if pool_for_img:
                             st.caption(f"符合 {len(pool_for_img)} 筆。勾選想要的；框內可上下捲動。")
                             with st.container(height=360):
@@ -1490,7 +1484,11 @@ if doc:
                         else:
                             st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
 
-                gcol, zcol = st.columns(2)
+                rcol, gcol, zcol = st.columns(3)
+                if rcol.button("🔄 重新整理", use_container_width=True, key="refresh_pool_all"):
+                    st.session_state.refresh_mat_pool = True
+                    st.session_state.refresh_review_pool = True
+                    st.rerun()
                 gen_clicked = gcol.button("✨ 產生好評圖", use_container_width=True)
                 zip_clicked = zcol.button("📦 原圖打包(ZIP)", use_container_width=True)
                 if gen_clicked:
@@ -1762,12 +1760,9 @@ if doc:
                             editor_shown = False
                             if use_canvas:
                                 if st.session_state.get("edit_slot") != slot_id:
-                                    # 未編輯此版位：顯示靜態預覽＋「編輯」鈕（一次只開一個畫布，避免多畫布同頁衝突）
+                                    # 未編輯此版位：顯示靜態預覽（「編輯文字」鈕在下方與確認儲存併排）
                                     editor_shown = True
                                     st.image(final_img_to_save, width=320)
-                                    if st.button("🎨 編輯文字（拖拉移動／縮放／旋轉）", key=f"startcv_{slot_id}", use_container_width=True):
-                                        st.session_state.edit_slot = slot_id
-                                        st.rerun()
                                 else:
                                     disp_w = 340
                                     cscale = disp_w / base_img.width
@@ -1812,9 +1807,6 @@ if doc:
                                                 st.session_state[f"crot_{slot_id}"] = rotation_angle
                                         final_img_to_save, text_w, text_h = _stamp_coupon(
                                             base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
-                                        if st.button("↩ 完成位置編輯（回預覽）", key=f"endcv_{slot_id}", use_container_width=True):
-                                            st.session_state.edit_slot = None
-                                            st.rerun()
                             if (not editor_shown) and HAS_IMG_COORDS:
                                 edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
                                                      horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
@@ -1863,7 +1855,21 @@ if doc:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)
                             
-                        if st.button(f"✅ 確認儲存", type="primary", use_container_width=True, key=f"btn_save_{slot_id}"):
+                        # 編輯文字 / 完成編輯 ＋ 確認儲存：縮窄併排同一排
+                        if enable_text and base_img and HAS_CANVAS:
+                            _bc1, _bc2 = st.columns(2)
+                            if st.session_state.get("edit_slot") == slot_id:
+                                if _bc1.button("↩ 完成編輯", key=f"endcv_{slot_id}", use_container_width=True):
+                                    st.session_state.edit_slot = None
+                                    st.rerun()
+                            else:
+                                if _bc1.button("🎨 編輯文字", key=f"startcv_{slot_id}", use_container_width=True):
+                                    st.session_state.edit_slot = slot_id
+                                    st.rerun()
+                            save_clicked = _bc2.button("✅ 確認儲存", type="primary", use_container_width=True, key=f"btn_save_{slot_id}")
+                        else:
+                            save_clicked = st.button("✅ 確認儲存", type="primary", use_container_width=True, key=f"btn_save_{slot_id}")
+                        if save_clicked:
                             with st.spinner("高畫質切塊處理中，並同步至雲端..."):
                                 chunks = img_to_base64_chunks(final_img_to_save)
                                 row_data = [f"coupon_{slot_id}"] + chunks

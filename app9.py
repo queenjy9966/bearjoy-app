@@ -1751,51 +1751,63 @@ if doc:
                             final_img_to_save, text_w, text_h = _stamp_coupon(
                                 base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
 
-                            canvas_shown = False
+                            editor_shown = False
                             if use_canvas:
-                                disp_w = 340
-                                cscale = disp_w / base_img.width
-                                disp_h = max(1, int(base_img.height * cscale))
-                                bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
-                                init = {"version": "4.4.0", "objects": [{
-                                    "type": "i-text", "text": text_input or "日期",
-                                    "left": float(x_pos * cscale), "top": float(y_pos * cscale),
-                                    "originX": "center", "originY": "center",
-                                    "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
-                                    "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
-                                }]}
-                                try:
-                                    # update_streamlit=False：拖移過程不回傳、不重畫（不閃）；按「確認儲存」等動作時才讀取目前位置
-                                    cres = st_canvas(background_image=bg, initial_drawing=init,
-                                                     drawing_mode="transform", update_streamlit=False,
-                                                     height=disp_h, width=disp_w, display_toolbar=False,
-                                                     key=f"cv_{slot_id}")
-                                    canvas_shown = True
-                                except Exception as _ce:
-                                    cres = None
-                                    st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），已自動改用『拖曳編輯』。")
-                                if canvas_shown:
-                                    st.caption("🎨 直接拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉；調好後按「✅ 確認儲存」（拖移過程不閃，放開後才套用）")
-                                    if cres is not None and getattr(cres, "json_data", None):
-                                        objs = cres.json_data.get("objects", [])
-                                        if objs:
-                                            o = objs[0]
-                                            sx = float(o.get("scaleX", 1) or 1)
-                                            ang = float(o.get("angle", 0) or 0)
-                                            lx, ty2 = o.get("left"), o.get("top")
-                                            ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
-                                            if lx is not None and ty2 is not None:
-                                                x_pos = max(0, min(int(lx / cscale), base_img.width))
-                                                y_pos = max(0, min(int(ty2 / cscale), base_img.height))
-                                            font_size = max(10, min(int(round(ofs * sx / cscale)), 200))
-                                            rotation_angle = max(-180, min(int(round(((ang + 180) % 360) - 180)), 180))
-                                            st.session_state[f"px_{slot_id}"] = x_pos
-                                            st.session_state[f"py_{slot_id}"] = y_pos
-                                            st.session_state[f"csz_{slot_id}"] = font_size
-                                            st.session_state[f"crot_{slot_id}"] = rotation_angle
-                                    final_img_to_save, text_w, text_h = _stamp_coupon(
-                                        base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
-                            if (not canvas_shown) and HAS_IMG_COORDS:
+                                if st.session_state.get("edit_slot") != slot_id:
+                                    # 未編輯此版位：顯示靜態預覽＋「編輯」鈕（一次只開一個畫布，避免多畫布同頁衝突）
+                                    editor_shown = True
+                                    st.image(final_img_to_save, width=320)
+                                    if st.button("🎨 編輯文字（拖拉移動／縮放／旋轉）", key=f"startcv_{slot_id}", use_container_width=True):
+                                        st.session_state.edit_slot = slot_id
+                                        st.rerun()
+                                else:
+                                    disp_w = 340
+                                    cscale = disp_w / base_img.width
+                                    disp_h = max(1, int(base_img.height * cscale))
+                                    bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
+                                    init = {"version": "4.4.0", "objects": [{
+                                        "type": "i-text", "text": text_input or "日期",
+                                        "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                        "originX": "center", "originY": "center",
+                                        "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
+                                        "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
+                                    }]}
+                                    canvas_ok = False
+                                    try:
+                                        cres = st_canvas(background_image=bg, initial_drawing=init,
+                                                         drawing_mode="transform", update_streamlit=False,
+                                                         height=disp_h, width=disp_w, display_toolbar=False,
+                                                         key=f"cv_{slot_id}")
+                                        canvas_ok = True
+                                    except Exception as _ce:
+                                        cres = None
+                                        st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），改用拖曳編輯。")
+                                    if canvas_ok:
+                                        editor_shown = True
+                                        st.caption("🎨 拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉（放開後不閃）。調好按下方「✅ 確認儲存」。")
+                                        if cres is not None and getattr(cres, "json_data", None):
+                                            objs = cres.json_data.get("objects", [])
+                                            if objs:
+                                                o = objs[0]
+                                                sx = float(o.get("scaleX", 1) or 1)
+                                                ang = float(o.get("angle", 0) or 0)
+                                                lx, ty2 = o.get("left"), o.get("top")
+                                                ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
+                                                if lx is not None and ty2 is not None:
+                                                    x_pos = max(0, min(int(lx / cscale), base_img.width))
+                                                    y_pos = max(0, min(int(ty2 / cscale), base_img.height))
+                                                font_size = max(10, min(int(round(ofs * sx / cscale)), 200))
+                                                rotation_angle = max(-180, min(int(round(((ang + 180) % 360) - 180)), 180))
+                                                st.session_state[f"px_{slot_id}"] = x_pos
+                                                st.session_state[f"py_{slot_id}"] = y_pos
+                                                st.session_state[f"csz_{slot_id}"] = font_size
+                                                st.session_state[f"crot_{slot_id}"] = rotation_angle
+                                        final_img_to_save, text_w, text_h = _stamp_coupon(
+                                            base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
+                                        if st.button("↩ 完成位置編輯（回預覽）", key=f"endcv_{slot_id}", use_container_width=True):
+                                            st.session_state.edit_slot = None
+                                            st.rerun()
+                            if (not editor_shown) and HAS_IMG_COORDS:
                                 edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
                                                      horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
                                 hint = {"✋ 移動": "在圖上按住拖曳 → 文字移到放開處",
@@ -1835,7 +1847,7 @@ if doc:
                                                 changed = True
                                         if changed:
                                             st.rerun()
-                            elif not canvas_shown:
+                            elif not editor_shown:
                                 st.session_state[f"px_{slot_id}"] = x_pos
                                 st.session_state[f"py_{slot_id}"] = y_pos
                                 st.image(final_img_to_save, width=320)

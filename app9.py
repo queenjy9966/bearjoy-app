@@ -13,6 +13,7 @@ import urllib.request
 import threading
 import calendar
 import re
+import math
 
 # 點圖定位元件（沒裝成功就自動退回拉桿，不影響其他功能）
 try:
@@ -1088,11 +1089,11 @@ if doc:
             st.subheader("顧客最愛優點分析")
             st.caption("選規格 → 統整該款顧客最愛優點，直接拿去寫標題賣點。")
             _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
-            kw = st.text_input("規格關鍵字（選填）", placeholder="品項多時用，例：三層、壓縮", key="insight_kw").strip()
-            _specs = [s for s in _specs_all if kw.lower() in s.lower()] if kw else _specs_all
             sel_specs = st.multiselect(
-                "選規格（可複選＝合併同一類；全部留空＝分析全部）",
-                _specs, key="insight_specs")
+                "選規格（可複選＝合併同一類；可直接打字搜尋；留空＝用下方關鍵字或全部）",
+                _specs_all, key="insight_specs")
+            kw = st.text_input("或：用關鍵字一次分析（免逐一勾選）",
+                               placeholder="例：三層 → 分析所有含「三層」的款", key="insight_kw").strip()
             if st.button("🔍 開始分析", use_container_width=True):
                 if not api_key:
                     st.error("需要 API 金鑰才能分析。")
@@ -1455,14 +1456,20 @@ if doc:
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
-                            c_sz, c_rot = st.columns(2)
-                            c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                            font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
-                            rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
                             if HAS_IMG_COORDS:
+                                # 🖱️ 移動／縮放／旋轉 三種模式，全部用滑鼠在圖片上拖曳，取代「大小／旋轉」兩條 BAR
+                                edit_mode = st.radio(
+                                    "操作模式", ["✋ 移動", "🔍 縮放", "🔄 旋轉"],
+                                    horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
+                                font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
+                                rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
                                 x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                                 y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
                             else:
+                                c_sz, c_rot = st.columns(2)
+                                c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
+                                rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
                                 c_x, c_y = st.columns(2)
                                 c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
                                 x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
@@ -1504,16 +1511,36 @@ if doc:
                                 except TypeError:
                                     coords = st_image_coordinates(disp_img, key=f"clk_{slot_id}")
                                 if coords:
-                                    cx = coords.get("x2", coords.get("x"))
-                                    cy = coords.get("y2", coords.get("y"))
-                                    if cx is not None and cy is not None:
+                                    rx = coords.get("x2", coords.get("x"))
+                                    ry = coords.get("y2", coords.get("y"))
+                                    if rx is not None and ry is not None:
                                         ratio = base_img.width / disp_w
-                                        nx, ny = int(cx * ratio), int(cy * ratio)
-                                        if nx != x_pos or ny != y_pos:
-                                            st.session_state[f"px_{slot_id}"] = nx
-                                            st.session_state[f"py_{slot_id}"] = ny
+                                        cxd, cyd = x_pos / ratio, y_pos / ratio  # 目前文字中心（顯示座標）
+                                        changed = False
+                                        if "移動" in edit_mode:
+                                            nx, ny = int(rx * ratio), int(ry * ratio)
+                                            if nx != x_pos or ny != y_pos:
+                                                st.session_state[f"px_{slot_id}"] = nx
+                                                st.session_state[f"py_{slot_id}"] = ny
+                                                changed = True
+                                        elif "縮放" in edit_mode:
+                                            d = math.hypot(rx - cxd, ry - cyd) * ratio
+                                            ns = max(10, min(int(d / 2), 200))
+                                            if ns != font_size:
+                                                st.session_state[f"csz_{slot_id}"] = ns
+                                                changed = True
+                                        else:  # 旋轉
+                                            ang = math.degrees(math.atan2(ry - cyd, rx - cxd))
+                                            nr = max(-180, min(int(round(ang)), 180))
+                                            if nr != rotation_angle:
+                                                st.session_state[f"crot_{slot_id}"] = nr
+                                                changed = True
+                                        if changed:
                                             st.rerun()
-                                st.caption("位置：在圖片上按住拖曳即可（放開定位）。大小、旋轉用上方拉桿。")
+                                _hint = {"✋ 移動": "拖曳到想要的位置（放開定位）",
+                                         "🔍 縮放": "從文字往外拖：離越遠字越大、越近越小",
+                                         "🔄 旋轉": "往哪個方向拖，文字就朝那個方向轉"}.get(edit_mode, "")
+                                st.caption(f"目前模式：{edit_mode}　·　{_hint}")
                             else:
                                 st.image(_draw_marker(final_img_to_save, x_pos, y_pos), width=320)
                                 st.caption("紅十字＝文字位置，用上方拉桿調整位置/大小/旋轉。")

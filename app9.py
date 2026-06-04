@@ -124,6 +124,17 @@ st.markdown("""
     }
     .stButton>button { background-color: #798571 !important; color: white !important; border-radius: 6px !important; }
     [data-testid="stImage"] { display: flex; justify-content: center; }
+    /* ✨ 區塊說明的小「?」popover 鈕：做成小圓鈕、不搶眼 */
+    [data-testid="stPopover"] button {
+        background: #F3F1EA !important; color: #8A8275 !important;
+        border: 1px solid #DED8CC !important; border-radius: 50% !important;
+        width: 30px !important; min-width: 30px !important; max-width: 30px !important;
+        height: 30px !important; min-height: 30px !important;
+        padding: 0 !important; font-size: 14px !important; font-weight: bold !important;
+        display: inline-flex !important; align-items: center !important; justify-content: center !important;
+        margin: -4px 0 6px 2px !important;
+    }
+    [data-testid="stPopover"] button:hover { background: #E6E2D8 !important; color: #4A4238 !important; }
     /* ✨ 勾選框文字一排不換行（回購語氣／保存截圖） */
     [data-testid="stCheckbox"] label { white-space: nowrap !important; }
     [data-testid="stCheckbox"] label p { white-space: nowrap !important; font-size: 13.5px !important; margin: 0 !important; }
@@ -539,7 +550,7 @@ def section_block(emoji, title, desc=""):
         f"<span style='font-size:17px;font-weight:bold;color:#4A4238;letter-spacing:.5px;'>{emoji} {title}</span></div>",
         unsafe_allow_html=True)
     if desc:
-        with st.popover("ⓘ 說明"):
+        with st.popover("❔"):
             st.markdown(f"<div style='font-size:13.5px;color:#4A4238;line-height:1.6;max-width:520px;'>{desc}</div>",
                         unsafe_allow_html=True)
 
@@ -1140,92 +1151,91 @@ if doc:
                             st.error(f"雲端同步失敗：請確認試算表格式是否正確。({e})")
 
         with tab2:
-            st.subheader("VIP 顧客戰情室")
-            if doc:
-                try:
-                    vip_ws = get_or_create_ws(doc, "VIP名單")
-                    data = vip_ws.get_all_values()
-                    if len(data) > 1:
-                        st.caption(f"目前共 {len(data) - 1} 位 VIP 顧客　·　最多顯示 5 筆，其餘用表格右側滾輪查看")
-                        # ✨ 固定高度＝表頭＋5 列：最多呈現 5 筆，其餘在框內用右側滾輪捲動，不會把整頁撐長
-                        st.dataframe(pd.DataFrame(data[1:], columns=data[0]), use_container_width=True, height=213)
-                    else: st.info("目前 VIP 名單尚無資料，趕快去解析第一筆評價吧！")
+            with st.container(border=True):
+                section_block("👑", "VIP 顧客戰情室", "所有與你互動過的顧客名單與互動次數。最多顯示 5 筆，其餘用表格右側滾輪查看。")
+                if doc:
+                    try:
+                        vip_ws = get_or_create_ws(doc, "VIP名單")
+                        data = vip_ws.get_all_values()
+                        if len(data) > 1:
+                            st.caption(f"目前共 {len(data) - 1} 位 VIP 顧客")
+                            # ✨ 固定高度＝表頭＋5 列：最多呈現 5 筆，其餘在框內用右側滾輪捲動，不會把整頁撐長
+                            st.dataframe(pd.DataFrame(data[1:], columns=data[0]), use_container_width=True, height=213)
+                        else: st.info("目前 VIP 名單尚無資料，趕快去解析第一筆評價吧！")
 
-                    # 💤 功能3：沉睡客喚回——找出好久沒回來的老客，一鍵生成喚回訊息
-                    if len(data) > 1:
-                        st.divider()
-                        st.markdown("#### 沉睡客喚回")
-                        st.caption("找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。建議 30～90 天；想測試可先把天數設小一點看效果。")
-                        c_days, c_code = st.columns(2)
-                        days = c_days.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
-                        wb_code = c_code.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
-                        header = data[0]
-                        i_acc = header.index("客戶帳號") if "客戶帳號" in header else 0
-                        i_last = header.index("最後互動") if "最後互動" in header else 2
-                        today = datetime.now()
-                        sleepers, parsed = [], 0
-                        for r in data[1:]:
-                            if len(r) <= max(i_acc, i_last):
-                                continue
-                            last = str(r[i_last]).strip()[:10]
-                            try:
-                                gap = (today - datetime.strptime(last, "%Y-%m-%d")).days
-                                parsed += 1
-                                if gap >= int(days):
-                                    sleepers.append((str(r[i_acc]), last, gap))
-                            except Exception:
-                                continue
-                        if sleepers:
-                            sleepers.sort(key=lambda x: -x[2])
-                            st.write(f"共找到 **{len(sleepers)}** 位沉睡客（依沉睡天數排序）：")
-                            coupon_line = f"為感謝您的支持，送上專屬優惠碼 👉 {wb_code.strip()} 🎁\n" if wb_code.strip() else ""
+                        # 💤 功能3：沉睡客喚回——找出好久沒回來的老客，一鍵生成喚回訊息
+                        if len(data) > 1:
+                            section_block("💤", "沉睡客喚回", "找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。建議 30～90 天；想測試可先把天數設小一點看效果。")
+                            c_days, c_code = st.columns(2)
+                            days = c_days.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
+                            wb_code = c_code.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
+                            header = data[0]
+                            i_acc = header.index("客戶帳號") if "客戶帳號" in header else 0
+                            i_last = header.index("最後互動") if "最後互動" in header else 2
+                            today = datetime.now()
+                            sleepers, parsed = [], 0
+                            for r in data[1:]:
+                                if len(r) <= max(i_acc, i_last):
+                                    continue
+                                last = str(r[i_last]).strip()[:10]
+                                try:
+                                    gap = (today - datetime.strptime(last, "%Y-%m-%d")).days
+                                    parsed += 1
+                                    if gap >= int(days):
+                                        sleepers.append((str(r[i_acc]), last, gap))
+                                except Exception:
+                                    continue
+                            if sleepers:
+                                sleepers.sort(key=lambda x: -x[2])
+                                st.write(f"共找到 **{len(sleepers)}** 位沉睡客（依沉睡天數排序）：")
+                                coupon_line = f"為感謝您的支持，送上專屬優惠碼 👉 {wb_code.strip()} 🎁\n" if wb_code.strip() else ""
 
-                            def _wakeback_msg(acc):
-                                return (f"親愛的 {acc}，\n\n"
-                                        f"好久不見了，BearJoy Sharon 一直記得您 🥰\n"
-                                        f"最近上了新品與優惠，特別想第一個和您分享！\n"
-                                        f"{coupon_line}"
-                                        f"期待您再回來逛逛 ❤️\n\n—— BearJoy Sharon")
+                                def _wakeback_msg(acc):
+                                    return (f"親愛的 {acc}，\n\n"
+                                            f"好久不見了，BearJoy Sharon 一直記得您 🥰\n"
+                                            f"最近上了新品與優惠，特別想第一個和您分享！\n"
+                                            f"{coupon_line}"
+                                            f"期待您再回來逛逛 ❤️\n\n—— BearJoy Sharon")
 
-                            # 📥 下載沉睡客名單 Excel（含帳號、最後互動、沉睡天數、可直接複製的喚回訊息）
-                            try:
-                                df_sleep = pd.DataFrame(
-                                    [{"客戶帳號": acc, "最後互動日期": last, "已沉睡天數": gap,
-                                      "喚回訊息": _wakeback_msg(acc)} for acc, last, gap in sleepers])
-                                xbuf = BytesIO()
-                                with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
-                                    df_sleep.to_excel(writer, index=False, sheet_name="沉睡客名單")
-                                    _excel_align_left_top(writer.sheets["沉睡客名單"])
-                                cdl1, cdl2 = st.columns(2)
-                                with cdl1:
-                                    st.download_button(
-                                        "📥 下載 Excel",
-                                        data=xbuf.getvalue(),
-                                        file_name=f"BearJoy_沉睡客名單_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        use_container_width=True)
-                                with cdl2:
-                                    if st.button("☁️ 同步到雲端", use_container_width=True, key="sleep_cloud"):
-                                        try:
-                                            with st.spinner("寫入雲端中…"):
-                                                link = write_df_to_sheet(doc, "沉睡客名單", df_sleep)
-                                            st.success("已寫入雲端 Google Sheet「沉睡客名單」分頁 ✅")
-                                            if link:
-                                                st.markdown(f"[👉 點此開啟雲端名單]({link})")
-                                        except Exception as e:
-                                            st.error(f"雲端同步失敗：{e}")
-                            except Exception as e:
-                                st.caption(f"⚠️ Excel 名單產生失敗（不影響下方訊息）：{e}")
+                                # 📥 下載沉睡客名單 Excel（含帳號、最後互動、沉睡天數、可直接複製的喚回訊息）
+                                try:
+                                    df_sleep = pd.DataFrame(
+                                        [{"客戶帳號": acc, "最後互動日期": last, "已沉睡天數": gap,
+                                          "喚回訊息": _wakeback_msg(acc)} for acc, last, gap in sleepers])
+                                    xbuf = BytesIO()
+                                    with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
+                                        df_sleep.to_excel(writer, index=False, sheet_name="沉睡客名單")
+                                        _excel_align_left_top(writer.sheets["沉睡客名單"])
+                                    cdl1, cdl2 = st.columns(2)
+                                    with cdl1:
+                                        st.download_button(
+                                            "📥 下載 Excel",
+                                            data=xbuf.getvalue(),
+                                            file_name=f"BearJoy_沉睡客名單_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                            use_container_width=True)
+                                    with cdl2:
+                                        if st.button("☁️ 同步到雲端", use_container_width=True, key="sleep_cloud"):
+                                            try:
+                                                with st.spinner("寫入雲端中…"):
+                                                    link = write_df_to_sheet(doc, "沉睡客名單", df_sleep)
+                                                st.success("已寫入雲端 Google Sheet「沉睡客名單」分頁 ✅")
+                                                if link:
+                                                    st.markdown(f"[👉 點此開啟雲端名單]({link})")
+                                            except Exception as e:
+                                                st.error(f"雲端同步失敗：{e}")
+                                except Exception as e:
+                                    st.caption(f"⚠️ Excel 名單產生失敗（不影響下方訊息）：{e}")
 
-                            for acc, last, gap in sleepers:
-                                with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
-                                    st.code(_wakeback_msg(acc), language="text")
-                        elif parsed == 0:
-                            st.warning("讀不到「最後互動」日期，請確認 VIP名單 的日期格式為 2026-06-02。")
-                        else:
-                            st.success(f"已檢查 {parsed} 位顧客，目前沒有超過 {int(days)} 天沒互動的沉睡客 🎉")
-                except Exception as e:
-                    st.error(f"讀取失敗：{e}")
+                                for acc, last, gap in sleepers:
+                                    with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
+                                        st.code(_wakeback_msg(acc), language="text")
+                            elif parsed == 0:
+                                st.warning("讀不到「最後互動」日期，請確認 VIP名單 的日期格式為 2026-06-02。")
+                            else:
+                                st.success(f"已檢查 {parsed} 位顧客，目前沒有超過 {int(days)} 天沒互動的沉睡客 🎉")
+                    except Exception as e:
+                        st.error(f"讀取失敗：{e}")
 
         with tab3:
             # 共用：載入文字評價清單（最新在前）；分析與好評圖挑選都用這份，避免重複讀取
@@ -1240,274 +1250,276 @@ if doc:
             review_pool = st.session_state.review_pool
 
             # 📊 大區塊一：顧客最愛優點分析
-            section_block("📊", "顧客最愛優點分析", "選規格 → 統整該款顧客最愛優點，直接拿去寫蝦皮標題與賣點。")
-            _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
-            fic1, fic2 = st.columns(2)
-            sel_specs = fic1.multiselect("選規格（可複選＝合併；可打字搜尋；留空＝全部）",
-                                         _specs_all, key="insight_specs")
-            kw = fic2.text_input("或用關鍵字一次分析", placeholder="例：三層 → 所有含三層的款",
-                                 key="insight_kw").strip()
-            if st.button("🔍 開始分析", use_container_width=True):
-                if not api_key:
-                    st.error("需要 API 金鑰才能分析。")
-                else:
-                    try:
-                        if sel_specs:
-                            reviews = [r[2] for r in review_pool if _review_spec(r[2]) in sel_specs]
-                            used_label = "、".join(sel_specs)
-                        elif kw:
-                            reviews = [r[2] for r in review_pool if kw.lower() in _review_spec(r[2]).lower() and _review_spec(r[2])]
-                            used_label = f"關鍵字「{kw}」"
-                        else:
-                            reviews = [r[2] for r in review_pool]
-                            used_label = "全部"
-                        if not reviews:
-                            st.info("找不到符合的評價可分析（換個關鍵字或規格試試）。")
-                        else:
-                            with st.spinner(f"AI 正在分析 {len(reviews)} 筆評價..."):
-                                joined = "\n".join(f"- {r}" for r in reviews[:200])
-                                prompt = (
-                                    "以下是某蝦皮賣場的真實顧客評價。請統整出顧客最常稱讚的「5 個優點」，"
-                                    "用 Markdown 條列，每點格式為：\n"
-                                    "**1. 優點標題** — 簡短說明（附 1 句顧客原話佐證）\n"
-                                    "最後另起一段，以 **🛒 賣點建議：** 開頭，給 2~3 句可直接用在商品標題或描述的文案。\n\n"
-                                    f"顧客評價如下：\n{joined}"
-                                )
-                                result = gemini_generate(api_key, [prompt])
-                            if result:
-                                st.session_state.insight_result = result
-                                st.session_state.insight_spec_used = used_label
-                            else:
-                                st.error("分析失敗，請稍後再試（可能是 AI 額度或網路問題）。")
-                    except Exception as e:
-                        st.error(f"分析失敗：{e}")
-            if st.session_state.get("insight_result"):
-                _used = st.session_state.get("insight_spec_used", "全部")
-                st.markdown(f"<p style='font-size:12px;color:#A39C90;margin:6px 0 2px 2px;'>分析範圍：{_used}</p>", unsafe_allow_html=True)
-                with st.container(border=True):
-                    st.markdown(st.session_state.insight_result)
-                # 第一欄＝規格（哪一款），分析內容整段放同一格
-                df_insight = pd.DataFrame([{
-                    "規格": st.session_state.get("insight_spec_used", "全部"),
-                    "顧客優點分析": _strip_md(st.session_state.insight_result),
-                }])
-                cin1, cin2 = st.columns(2)
-                with cin1:
-                    try:
-                        ibuf = BytesIO()
-                        with pd.ExcelWriter(ibuf, engine="openpyxl") as writer:
-                            df_insight.to_excel(writer, index=False, sheet_name="顧客優點分析")
-                            _excel_align_left_top(writer.sheets["顧客優點分析"])
-                        st.download_button(
-                            "📥 下載 Excel",
-                            data=ibuf.getvalue(),
-                            file_name=f"BearJoy_顧客優點分析_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True)
-                    except Exception as e:
-                        st.caption(f"⚠️ Excel 產生失敗：{e}")
-                with cin2:
-                    if st.button("☁️ 同步到雲端", use_container_width=True, key="insight_cloud"):
+            with st.container(border=True):
+                section_block("📊", "顧客最愛優點分析", "選規格 → 統整該款顧客最愛優點，直接拿去寫蝦皮標題與賣點。")
+                _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
+                fic1, fic2 = st.columns(2)
+                sel_specs = fic1.multiselect("選規格（可複選＝合併；可打字搜尋；留空＝全部）",
+                                             _specs_all, key="insight_specs")
+                kw = fic2.text_input("或用關鍵字一次分析", placeholder="例：三層 → 所有含三層的款",
+                                     key="insight_kw").strip()
+                if st.button("🔍 開始分析", use_container_width=True):
+                    if not api_key:
+                        st.error("需要 API 金鑰才能分析。")
+                    else:
                         try:
-                            with st.spinner("寫入雲端中…"):
-                                link = write_df_to_sheet(doc, "顧客優點分析", df_insight)
-                            st.success("已寫入雲端 Google Sheet「顧客優點分析」分頁 ✅")
-                            if link:
-                                st.markdown(f"[👉 點此開啟雲端分析]({link})")
+                            if sel_specs:
+                                reviews = [r[2] for r in review_pool if _review_spec(r[2]) in sel_specs]
+                                used_label = "、".join(sel_specs)
+                            elif kw:
+                                reviews = [r[2] for r in review_pool if kw.lower() in _review_spec(r[2]).lower() and _review_spec(r[2])]
+                                used_label = f"關鍵字「{kw}」"
+                            else:
+                                reviews = [r[2] for r in review_pool]
+                                used_label = "全部"
+                            if not reviews:
+                                st.info("找不到符合的評價可分析（換個關鍵字或規格試試）。")
+                            else:
+                                with st.spinner(f"AI 正在分析 {len(reviews)} 筆評價..."):
+                                    joined = "\n".join(f"- {r}" for r in reviews[:200])
+                                    prompt = (
+                                        "以下是某蝦皮賣場的真實顧客評價。請統整出顧客最常稱讚的「5 個優點」，"
+                                        "用 Markdown 條列，每點格式為：\n"
+                                        "**1. 優點標題** — 簡短說明（附 1 句顧客原話佐證）\n"
+                                        "最後另起一段，以 **🛒 賣點建議：** 開頭，給 2~3 句可直接用在商品標題或描述的文案。\n\n"
+                                        f"顧客評價如下：\n{joined}"
+                                    )
+                                    result = gemini_generate(api_key, [prompt])
+                                if result:
+                                    st.session_state.insight_result = result
+                                    st.session_state.insight_spec_used = used_label
+                                else:
+                                    st.error("分析失敗，請稍後再試（可能是 AI 額度或網路問題）。")
                         except Exception as e:
-                            st.error(f"雲端同步失敗：{e}")
+                            st.error(f"分析失敗：{e}")
+                if st.session_state.get("insight_result"):
+                    _used = st.session_state.get("insight_spec_used", "全部")
+                    st.markdown(f"<p style='font-size:12px;color:#A39C90;margin:6px 0 2px 2px;'>分析範圍：{_used}</p>", unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.markdown(st.session_state.insight_result)
+                    # 第一欄＝規格（哪一款），分析內容整段放同一格
+                    df_insight = pd.DataFrame([{
+                        "規格": st.session_state.get("insight_spec_used", "全部"),
+                        "顧客優點分析": _strip_md(st.session_state.insight_result),
+                    }])
+                    cin1, cin2 = st.columns(2)
+                    with cin1:
+                        try:
+                            ibuf = BytesIO()
+                            with pd.ExcelWriter(ibuf, engine="openpyxl") as writer:
+                                df_insight.to_excel(writer, index=False, sheet_name="顧客優點分析")
+                                _excel_align_left_top(writer.sheets["顧客優點分析"])
+                            st.download_button(
+                                "📥 下載 Excel",
+                                data=ibuf.getvalue(),
+                                file_name=f"BearJoy_顧客優點分析_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True)
+                        except Exception as e:
+                            st.caption(f"⚠️ Excel 產生失敗：{e}")
+                    with cin2:
+                        if st.button("☁️ 同步到雲端", use_container_width=True, key="insight_cloud"):
+                            try:
+                                with st.spinner("寫入雲端中…"):
+                                    link = write_df_to_sheet(doc, "顧客優點分析", df_insight)
+                                st.success("已寫入雲端 Google Sheet「顧客優點分析」分頁 ✅")
+                                if link:
+                                    st.markdown(f"[👉 點此開啟雲端分析]({link})")
+                            except Exception as e:
+                                st.error(f"雲端同步失敗：{e}")
 
             # 🖼️ 大區塊二：一鍵生成顧客好評圖
-            section_block("🖼️", "一鍵生成「顧客好評圖」", "貼蝦皮置頂、IG、FB、LINE，提升新客下單信任感。")
-            SIZE_PRESETS = {
-                "正方形 1:1（IG / 蝦皮 1080×1080）": (1080, 1080),
-                "直式 9:16（限動・Reels 1080×1920）": (1080, 1920),
-                "橫式（FB貼文 1200×630）": (1200, 630),
-                "LINE 圖文（1040×1040）": (1040, 1040),
-                "自訂尺寸…": None,
-            }
-            c_tpl, c_size, c_n = st.columns(3)
-            template_label = c_tpl.selectbox("版型", [
-                "版型A：真實截圖拼接（用你上傳的評價圖）",
-                "版型B：文字精選卡",
-                "版型C：大字引用感",
-            ], key="rev_tpl")
-            size_label = c_size.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
-            rev_n = c_n.number_input("自動取幾筆", min_value=1, max_value=12, value=3, step=1,
-                                     key="rev_img_n", help="沒手動勾選評價時才會用到")
-            target_size = SIZE_PRESETS[size_label]
-            if target_size is None:
-                cw, ch = st.columns(2)
-                cust_w = cw.number_input("寬 (px)", 300, 4000, 1080, 20, key="rev_cw")
-                cust_h = ch.number_input("高 (px)", 300, 4000, 1080, 20, key="rev_ch")
-                target_size = (int(cust_w), int(cust_h))
+            with st.container(border=True):
+                section_block("🖼️", "一鍵生成「顧客好評圖」", "貼蝦皮置頂、IG、FB、LINE，提升新客下單信任感。")
+                SIZE_PRESETS = {
+                    "正方形 1:1（IG / 蝦皮 1080×1080）": (1080, 1080),
+                    "直式 9:16（限動・Reels 1080×1920）": (1080, 1920),
+                    "橫式（FB貼文 1200×630）": (1200, 630),
+                    "LINE 圖文（1040×1040）": (1040, 1040),
+                    "自訂尺寸…": None,
+                }
+                c_tpl, c_size, c_n = st.columns(3)
+                template_label = c_tpl.selectbox("版型", [
+                    "版型A：真實截圖拼接（用你上傳的評價圖）",
+                    "版型B：文字精選卡",
+                    "版型C：大字引用感",
+                ], key="rev_tpl")
+                size_label = c_size.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
+                rev_n = c_n.number_input("自動取幾筆", min_value=1, max_value=12, value=3, step=1,
+                                         key="rev_img_n", help="沒手動勾選評價時才會用到")
+                target_size = SIZE_PRESETS[size_label]
+                if target_size is None:
+                    cw, ch = st.columns(2)
+                    cust_w = cw.number_input("寬 (px)", 300, 4000, 1080, 20, key="rev_cw")
+                    cust_h = ch.number_input("高 (px)", 300, 4000, 1080, 20, key="rev_ch")
+                    target_size = (int(cust_w), int(cust_h))
 
-            # 只顯示「當前版型」對應的挑選區，畫面更乾淨
-            mat_pool = []
-            pool_for_img = review_pool  # 版型B/C 做圖用的評價範圍，下方規格/關鍵字篩選會覆蓋它
-            if template_label.startswith("版型A"):
-                if "mat_pool" not in st.session_state or st.session_state.get("refresh_mat_pool"):
-                    try:
-                        _mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
-                        _mat = [r for r in _mat if len(r) > 1 and r[0]]
-                        st.session_state.mat_pool = list(reversed(_mat))[:40]
-                    except Exception:
-                        st.session_state.mat_pool = []
-                    st.session_state.refresh_mat_pool = False
-                mat_pool = st.session_state.mat_pool
-                # 帳號→規格 對照（給舊截圖沒存規格時補規格）
-                acc2spec = {}
-                for rr in review_pool:
-                    sp = _review_spec(rr[2])
-                    if sp and rr[1] not in acc2spec:
-                        acc2spec[rr[1]] = sp
-                def _mat_spec(r):
-                    _, a, sp = _mat_meta(r[0])
-                    return sp or acc2spec.get(a, "")
-                # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：選項用全部規格清單，4 個款都會出現
-                fa1, fa2 = st.columns(2)
-                ma_specs = fa1.multiselect("選規格（可複選；留空＝全部）",
-                                           _specs_all, key="matimg_specs")
-                ma_kw = fa2.text_input("或用關鍵字篩選", placeholder="例：三層", key="matimg_kw").strip()
-                def _mat_match(r):
-                    sp = _mat_spec(r)
-                    if ma_specs:
-                        return sp in ma_specs
-                    if ma_kw:
-                        return bool(sp) and ma_kw.lower() in sp.lower()
-                    return True
-                mat_filtered = [(i, r) for i, r in enumerate(mat_pool) if _mat_match(r)]
-                with st.expander("🖼️ 挑選要拼接的截圖（不挑＝用最新幾張）", expanded=True):
-                    if st.button("🔄 重新整理截圖", key="refresh_mat"):
-                        st.session_state.refresh_mat_pool = True
-                        st.rerun()
-                    if not mat_filtered:
-                        st.caption("這個規格／關鍵字下沒有截圖，換個條件；或先到「批次評價處理」勾『💾 保存截圖』。")
-                    else:
-                        st.caption(f"符合 {len(mat_filtered)} 張。勾選想要的；框內可上下捲動。")
-                        thumbs = st.session_state.setdefault("_mat_thumbs", {})
-                        with st.container(height=330):
-                            cols = st.columns(3)
-                            for n, (idx, r) in enumerate(mat_filtered):
-                                with cols[n % 3]:
-                                    th = thumbs.get(r[0])
-                                    if th is None:
-                                        try:
-                                            im = base64_chunks_to_img([c for c in r[1:] if c]); im.thumbnail((400, 400)); th = im
-                                        except Exception:
-                                            th = False
-                                        thumbs[r[0]] = th
-                                    if th:
-                                        st.image(th, use_container_width=True)
-                                    _sp = _mat_spec(r)
-                                    st.checkbox(f"選 ［{_sp or '無規格'}］", key=f"matpick_{idx}")
-            else:
-                # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：先縮小要做圖的評價範圍
-                fc1, fc2 = st.columns(2)
-                img_specs = fc1.multiselect("選規格（可複選；留空＝全部）", _specs_all, key="revimg_specs")
-                img_kw = fc2.text_input("或用關鍵字篩選", placeholder="例：三層", key="revimg_kw").strip()
-                if img_specs:
-                    pool_for_img = [r for r in review_pool if _review_spec(r[2]) in img_specs]
-                elif img_kw:
-                    pool_for_img = [r for r in review_pool if img_kw.lower() in _review_spec(r[2]).lower() and _review_spec(r[2])]
+                # 只顯示「當前版型」對應的挑選區，畫面更乾淨
+                mat_pool = []
+                pool_for_img = review_pool  # 版型B/C 做圖用的評價範圍，下方規格/關鍵字篩選會覆蓋它
+                if template_label.startswith("版型A"):
+                    if "mat_pool" not in st.session_state or st.session_state.get("refresh_mat_pool"):
+                        try:
+                            _mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
+                            _mat = [r for r in _mat if len(r) > 1 and r[0]]
+                            st.session_state.mat_pool = list(reversed(_mat))[:40]
+                        except Exception:
+                            st.session_state.mat_pool = []
+                        st.session_state.refresh_mat_pool = False
+                    mat_pool = st.session_state.mat_pool
+                    # 帳號→規格 對照（給舊截圖沒存規格時補規格）
+                    acc2spec = {}
+                    for rr in review_pool:
+                        sp = _review_spec(rr[2])
+                        if sp and rr[1] not in acc2spec:
+                            acc2spec[rr[1]] = sp
+                    def _mat_spec(r):
+                        _, a, sp = _mat_meta(r[0])
+                        return sp or acc2spec.get(a, "")
+                    # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：選項用全部規格清單，4 個款都會出現
+                    fa1, fa2 = st.columns(2)
+                    ma_specs = fa1.multiselect("選規格（可複選；留空＝全部）",
+                                               _specs_all, key="matimg_specs")
+                    ma_kw = fa2.text_input("或用關鍵字篩選", placeholder="例：三層", key="matimg_kw").strip()
+                    def _mat_match(r):
+                        sp = _mat_spec(r)
+                        if ma_specs:
+                            return sp in ma_specs
+                        if ma_kw:
+                            return bool(sp) and ma_kw.lower() in sp.lower()
+                        return True
+                    mat_filtered = [(i, r) for i, r in enumerate(mat_pool) if _mat_match(r)]
+                    with st.expander("🖼️ 挑選要拼接的截圖（不挑＝用最新幾張）", expanded=True):
+                        if st.button("🔄 重新整理截圖", key="refresh_mat"):
+                            st.session_state.refresh_mat_pool = True
+                            st.rerun()
+                        if not mat_filtered:
+                            st.caption("這個規格／關鍵字下沒有截圖，換個條件；或先到「批次評價處理」勾『💾 保存截圖』。")
+                        else:
+                            st.caption(f"符合 {len(mat_filtered)} 張。勾選想要的；框內可上下捲動。")
+                            thumbs = st.session_state.setdefault("_mat_thumbs", {})
+                            with st.container(height=330):
+                                cols = st.columns(3)
+                                for n, (idx, r) in enumerate(mat_filtered):
+                                    with cols[n % 3]:
+                                        th = thumbs.get(r[0])
+                                        if th is None:
+                                            try:
+                                                im = base64_chunks_to_img([c for c in r[1:] if c]); im.thumbnail((400, 400)); th = im
+                                            except Exception:
+                                                th = False
+                                            thumbs[r[0]] = th
+                                        if th:
+                                            st.image(th, use_container_width=True)
+                                        _sp = _mat_spec(r)
+                                        st.checkbox(f"選 ［{_sp or '無規格'}］", key=f"matpick_{idx}")
                 else:
-                    pool_for_img = review_pool
-                with st.expander("✋ 自己挑要放哪幾筆好評（每筆顯示完整內容）", expanded=False):
-                    if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
-                        st.session_state.refresh_review_pool = True
-                        st.rerun()
-                    if pool_for_img:
-                        st.caption(f"符合 {len(pool_for_img)} 筆。勾選想要的；框內可上下捲動。")
-                        with st.container(height=360):
-                            for i, r in enumerate(pool_for_img):
-                                spec = _review_spec(r[2])
-                                st.checkbox(f"#{i + 1}　{r[1]}　［{spec or '無規格'}］", key=f"revpick_{i}")
-                                _content = str(r[2]).replace("<", "&lt;").replace(">", "&gt;")
-                                st.markdown(
-                                    f"<div style='font-size:13px;color:#4A4238;line-height:1.5;margin:-6px 0 10px 26px;'>{_content}</div>",
-                                    unsafe_allow_html=True)
-                    elif img_specs or img_kw:
-                        st.caption("這個規格／關鍵字下沒有評價，換一個條件試試。")
+                    # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：先縮小要做圖的評價範圍
+                    fc1, fc2 = st.columns(2)
+                    img_specs = fc1.multiselect("選規格（可複選；留空＝全部）", _specs_all, key="revimg_specs")
+                    img_kw = fc2.text_input("或用關鍵字篩選", placeholder="例：三層", key="revimg_kw").strip()
+                    if img_specs:
+                        pool_for_img = [r for r in review_pool if _review_spec(r[2]) in img_specs]
+                    elif img_kw:
+                        pool_for_img = [r for r in review_pool if img_kw.lower() in _review_spec(r[2]).lower() and _review_spec(r[2])]
                     else:
-                        st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
+                        pool_for_img = review_pool
+                    with st.expander("✋ 自己挑要放哪幾筆好評（每筆顯示完整內容）", expanded=False):
+                        if st.button("🔄 重新整理評價清單", key="refresh_pool_btn"):
+                            st.session_state.refresh_review_pool = True
+                            st.rerun()
+                        if pool_for_img:
+                            st.caption(f"符合 {len(pool_for_img)} 筆。勾選想要的；框內可上下捲動。")
+                            with st.container(height=360):
+                                for i, r in enumerate(pool_for_img):
+                                    spec = _review_spec(r[2])
+                                    st.checkbox(f"#{i + 1}　{r[1]}　［{spec or '無規格'}］", key=f"revpick_{i}")
+                                    _content = str(r[2]).replace("<", "&lt;").replace(">", "&gt;")
+                                    st.markdown(
+                                        f"<div style='font-size:13px;color:#4A4238;line-height:1.5;margin:-6px 0 10px 26px;'>{_content}</div>",
+                                        unsafe_allow_html=True)
+                        elif img_specs or img_kw:
+                            st.caption("這個規格／關鍵字下沒有評價，換一個條件試試。")
+                        else:
+                            st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
 
-            if st.button("✨ 產生好評圖", type="primary"):
-                try:
-                    card = None
-                    if template_label.startswith("版型A"):
-                        # 版型A：用實際評價截圖拼接；有勾選就用勾的，沒勾就用最新幾張
-                        sel_idx = [i for i, _ in mat_filtered if st.session_state.get(f"matpick_{i}")]
-                        chosen = [mat_pool[i] for i in sel_idx] if sel_idx else [r for _, r in mat_filtered][:int(rev_n)]
-                        imgs = []
-                        for r in chosen:
-                            try:
-                                imgs.append(base64_chunks_to_img([c for c in r[1:] if c]))
-                            except Exception:
-                                continue
-                        if not imgs:
-                            st.info("還沒有已保存的評價截圖。請先到「批次評價處理」勾選『💾 保存截圖』並處理幾筆，再回來生成。")
-                        else:
-                            card = make_collage_image(imgs, size=target_size)
-                    else:
-                        # 版型B/C：用 AI 解析後的文字做圖
-                        # 有勾選就用勾選的；沒勾就自動取最新、且「只取有規格」的（確保每則都有規格、也避免新舊重複）
-                        picked = [i for i in range(len(pool_for_img)) if st.session_state.get(f"revpick_{i}")]
-                        if picked:
-                            rows = [pool_for_img[i] for i in picked]
-                        else:
-                            spec_rows = [r for r in pool_for_img if _review_spec(r[2])]
-                            rows = (spec_rows or pool_for_img)[:int(rev_n)]
-                        reviews = [(r[1], r[2]) for r in rows]
-                        if not reviews:
-                            st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
-                        else:
-                            tpl = "quote" if template_label.startswith("版型C") else "cards"
-                            card = make_review_image(reviews, size=target_size, template=tpl)
-                    if card is not None:
-                        st.image(card, use_container_width=True)
-                        st.caption("💡 手機：長按上方圖片即可儲存，或按下方按鈕下載到手機。")
-                        buf = BytesIO(); card.save(buf, format="PNG")
-                        st.download_button("💻 下載好評圖", data=buf.getvalue(),
-                                           file_name=f"BearJoy_好評圖_{target_size[0]}x{target_size[1]}.png", mime="image/png")
-                except Exception as e:
-                    st.error(f"產生失敗：{e}")
-
-            # 📥 打包下載評價原圖（歸在「生成好評圖」區內，給美編用）
-            st.markdown("<p style='font-size:12.5px;color:#8A8275;margin:10px 0 4px 2px;'>📥 想拿原圖去美編？打包下載（每張 PNG 檔名＝日期 評價圖-規格）</p>", unsafe_allow_html=True)
-            if st.button("📦 打包下載原圖（ZIP）", use_container_width=True):
-                try:
-                    import zipfile
-                    mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
-                    mat = [r for r in mat if len(r) > 1 and r[0]]
-                    if not mat:
-                        st.info("還沒有已保存的評價原圖。請先到「批次評價處理」勾『💾 保存截圖』並處理幾筆。")
-                    else:
-                        # 帳號 → 規格 對照（從回覆紀錄取，用來命名）
-                        acc2spec = {}
-                        for r in review_pool:
-                            sp = _review_spec(r[2])
-                            if sp and r[1] not in acc2spec:
-                                acc2spec[r[1]] = sp
-                        zbuf = BytesIO()
-                        used = {}
-                        with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
-                            for r in mat:
+                if st.button("✨ 產生好評圖", type="primary"):
+                    try:
+                        card = None
+                        if template_label.startswith("版型A"):
+                            # 版型A：用實際評價截圖拼接；有勾選就用勾的，沒勾就用最新幾張
+                            sel_idx = [i for i, _ in mat_filtered if st.session_state.get(f"matpick_{i}")]
+                            chosen = [mat_pool[i] for i in sel_idx] if sel_idx else [r for _, r in mat_filtered][:int(rev_n)]
+                            imgs = []
+                            for r in chosen:
                                 try:
-                                    im = base64_chunks_to_img([c for c in r[1:] if c])
+                                    imgs.append(base64_chunks_to_img([c for c in r[1:] if c]))
                                 except Exception:
                                     continue
-                                date, acc, spec = _mat_meta(r[0])
-                                base = f"{date} 評價圖-{_safe_filename(spec or acc2spec.get(acc) or acc)}"
-                                k = used.get(base, 0); used[base] = k + 1
-                                fname = f"{base}.png" if k == 0 else f"{base}_{k + 1}.png"
-                                ib = BytesIO(); im.convert("RGB").save(ib, format="PNG")
-                                zf.writestr(fname, ib.getvalue())
-                        st.success(f"已打包 {sum(used.values())} 張原圖 ✅")
-                        st.download_button("💾 下載 ZIP", data=zbuf.getvalue(),
-                                           file_name=f"BearJoy_評價原圖_{datetime.now().strftime('%Y%m%d')}.zip",
-                                           mime="application/zip")
-                except Exception as e:
-                    st.error(f"打包失敗：{e}")
+                            if not imgs:
+                                st.info("還沒有已保存的評價截圖。請先到「批次評價處理」勾選『💾 保存截圖』並處理幾筆，再回來生成。")
+                            else:
+                                card = make_collage_image(imgs, size=target_size)
+                        else:
+                            # 版型B/C：用 AI 解析後的文字做圖
+                            # 有勾選就用勾選的；沒勾就自動取最新、且「只取有規格」的（確保每則都有規格、也避免新舊重複）
+                            picked = [i for i in range(len(pool_for_img)) if st.session_state.get(f"revpick_{i}")]
+                            if picked:
+                                rows = [pool_for_img[i] for i in picked]
+                            else:
+                                spec_rows = [r for r in pool_for_img if _review_spec(r[2])]
+                                rows = (spec_rows or pool_for_img)[:int(rev_n)]
+                            reviews = [(r[1], r[2]) for r in rows]
+                            if not reviews:
+                                st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
+                            else:
+                                tpl = "quote" if template_label.startswith("版型C") else "cards"
+                                card = make_review_image(reviews, size=target_size, template=tpl)
+                        if card is not None:
+                            st.image(card, use_container_width=True)
+                            st.caption("💡 手機：長按上方圖片即可儲存，或按下方按鈕下載到手機。")
+                            buf = BytesIO(); card.save(buf, format="PNG")
+                            st.download_button("💻 下載好評圖", data=buf.getvalue(),
+                                               file_name=f"BearJoy_好評圖_{target_size[0]}x{target_size[1]}.png", mime="image/png")
+                    except Exception as e:
+                        st.error(f"產生失敗：{e}")
+
+                # 📥 打包下載評價原圖（歸在「生成好評圖」區內，給美編用）
+                st.markdown("<p style='font-size:12.5px;color:#8A8275;margin:10px 0 4px 2px;'>📥 想拿原圖去美編？打包下載（每張 PNG 檔名＝日期 評價圖-規格）</p>", unsafe_allow_html=True)
+                if st.button("📦 打包下載原圖（ZIP）", use_container_width=True):
+                    try:
+                        import zipfile
+                        mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
+                        mat = [r for r in mat if len(r) > 1 and r[0]]
+                        if not mat:
+                            st.info("還沒有已保存的評價原圖。請先到「批次評價處理」勾『💾 保存截圖』並處理幾筆。")
+                        else:
+                            # 帳號 → 規格 對照（從回覆紀錄取，用來命名）
+                            acc2spec = {}
+                            for r in review_pool:
+                                sp = _review_spec(r[2])
+                                if sp and r[1] not in acc2spec:
+                                    acc2spec[r[1]] = sp
+                            zbuf = BytesIO()
+                            used = {}
+                            with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+                                for r in mat:
+                                    try:
+                                        im = base64_chunks_to_img([c for c in r[1:] if c])
+                                    except Exception:
+                                        continue
+                                    date, acc, spec = _mat_meta(r[0])
+                                    base = f"{date} 評價圖-{_safe_filename(spec or acc2spec.get(acc) or acc)}"
+                                    k = used.get(base, 0); used[base] = k + 1
+                                    fname = f"{base}.png" if k == 0 else f"{base}_{k + 1}.png"
+                                    ib = BytesIO(); im.convert("RGB").save(ib, format="PNG")
+                                    zf.writestr(fname, ib.getvalue())
+                            st.success(f"已打包 {sum(used.values())} 張原圖 ✅")
+                            st.download_button("💾 下載 ZIP", data=zbuf.getvalue(),
+                                               file_name=f"BearJoy_評價原圖_{datetime.now().strftime('%Y%m%d')}.zip",
+                                               mime="application/zip")
+                    except Exception as e:
+                        st.error(f"打包失敗：{e}")
 
     # ==========================================
     # ✨ 動態文字壓印版：折價券管理

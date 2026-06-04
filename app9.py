@@ -36,6 +36,13 @@ try:
 except Exception:
     pass
 
+# 畫布直接編輯元件（Canva 式：看著底圖直接拖文字＋拉角縮放＋轉圓點旋轉；上方補丁修好底圖顯示後即可用）
+try:
+    from streamlit_drawable_canvas import st_canvas
+    HAS_CANVAS = True
+except Exception:
+    HAS_CANVAS = False
+
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -1690,14 +1697,19 @@ if doc:
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
-                            # 🖱️ 移動／放大縮小／旋轉 三模式，全部用滑鼠/手指在「同一張圖」上拖曳，取代大小・旋轉 BAR
+                            # 操作方式：🎨 畫布直接編輯（Canva 式）／三模式拖曳／拉桿
                             x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                             y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            if HAS_IMG_COORDS:
+                            use_canvas = False
+                            if HAS_CANVAS:
+                                use_canvas = st.checkbox("🎨 用畫布直接編輯（直接拖文字、拉四角縮放、轉圓點旋轉）",
+                                                         value=True, key=f"usecv_{slot_id}")
+                            if use_canvas or HAS_IMG_COORDS:
                                 font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
                                 rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
-                                edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
-                                                     horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
+                                if not use_canvas:
+                                    edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
+                                                         horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
                             else:
                                 c_sz, c_rot = st.columns(2)
                                 c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
@@ -1711,7 +1723,47 @@ if doc:
                             final_img_to_save, text_w, text_h = _stamp_coupon(
                                 base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
 
-                            if HAS_IMG_COORDS:
+                            if use_canvas:
+                                st.caption("🎨 直接拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉（放開後即套用；若底圖空白請取消勾選改用三模式）")
+                                disp_w = 340
+                                cscale = disp_w / base_img.width
+                                disp_h = max(1, int(base_img.height * cscale))
+                                bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
+                                init = {"version": "4.4.0", "objects": [{
+                                    "type": "i-text", "text": text_input or "日期",
+                                    "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                    "originX": "center", "originY": "center",
+                                    "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
+                                    "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
+                                }]}
+                                try:
+                                    cres = st_canvas(background_image=bg, initial_drawing=init,
+                                                     drawing_mode="transform", update_streamlit=True,
+                                                     height=disp_h, width=disp_w, display_toolbar=False,
+                                                     key=f"cv_{slot_id}")
+                                except Exception:
+                                    cres = None
+                                if cres is not None and getattr(cres, "json_data", None):
+                                    objs = cres.json_data.get("objects", [])
+                                    if objs:
+                                        o = objs[0]
+                                        sx = float(o.get("scaleX", 1) or 1)
+                                        ang = float(o.get("angle", 0) or 0)
+                                        lx, ty2 = o.get("left"), o.get("top")
+                                        ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
+                                        if lx is not None and ty2 is not None:
+                                            x_pos = max(0, min(int(lx / cscale), base_img.width))
+                                            y_pos = max(0, min(int(ty2 / cscale), base_img.height))
+                                        font_size = max(10, min(int(round(ofs * sx / cscale)), 200))
+                                        rotation_angle = max(-180, min(int(round(((ang + 180) % 360) - 180)), 180))
+                                        st.session_state[f"px_{slot_id}"] = x_pos
+                                        st.session_state[f"py_{slot_id}"] = y_pos
+                                        st.session_state[f"csz_{slot_id}"] = font_size
+                                        st.session_state[f"crot_{slot_id}"] = rotation_angle
+                                # 用最新值重算實際效果供儲存（存檔以 PIL 字體為準，較清晰）
+                                final_img_to_save, text_w, text_h = _stamp_coupon(
+                                    base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
+                            elif HAS_IMG_COORDS:
                                 hint = {"✋ 移動": "在圖上按住拖曳 → 文字移到放開處",
                                         "🔍 放大縮小": "從文字往外拖＝放大、往中心拖＝縮小",
                                         "🔄 旋轉": "往哪個方向拖，文字就轉向那邊"}.get(edit_mode, "")

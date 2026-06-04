@@ -1078,19 +1078,22 @@ if doc:
             st.subheader("顧客最愛優點分析")
             st.caption("依『規格（款式）』統整顧客最常稱讚的優點，直接拿去寫該款的蝦皮標題與賣點。")
             _specs = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
-            sel_spec = st.selectbox("選規格分析（同款式一起分析；選『全部』＝不分款）",
-                                    ["全部"] + _specs, key="insight_spec")
+            sel_specs = st.multiselect(
+                "選規格分析（可複選，勾起來的規格會合併成『同一類』一起分析；不選＝全部）",
+                _specs, key="insight_specs")
             if st.button("🔍 開始分析顧客最愛優點"):
                 if not api_key:
                     st.error("需要 API 金鑰才能分析。")
                 else:
                     try:
-                        if sel_spec == "全部":
+                        if not sel_specs:
                             reviews = [r[2] for r in review_pool]
+                            used_label = "全部"
                         else:
-                            reviews = [r[2] for r in review_pool if _review_spec(r[2]) == sel_spec]
+                            reviews = [r[2] for r in review_pool if _review_spec(r[2]) in sel_specs]
+                            used_label = "、".join(sel_specs)
                         if not reviews:
-                            st.info("這個規格目前還沒有評價可分析。")
+                            st.info("這些規格目前還沒有評價可分析。")
                         else:
                             with st.spinner(f"AI 正在分析 {len(reviews)} 筆評價..."):
                                 joined = "\n".join(f"- {r}" for r in reviews[:200])
@@ -1104,7 +1107,7 @@ if doc:
                                 result = gemini_generate(api_key, [prompt])
                             if result:
                                 st.session_state.insight_result = result
-                                st.session_state.insight_spec_used = sel_spec
+                                st.session_state.insight_spec_used = used_label
                             else:
                                 st.error("分析失敗，請稍後再試（可能是 AI 額度或網路問題）。")
                     except Exception as e:

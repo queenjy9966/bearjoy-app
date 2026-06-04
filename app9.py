@@ -12,6 +12,7 @@ from io import BytesIO
 import urllib.request
 import threading
 import calendar
+import re
 
 # 點圖定位元件（沒裝成功就自動退回拉桿，不影響其他功能）
 try:
@@ -452,11 +453,27 @@ def write_df_to_sheet(doc, title, df):
         return None
 
 def _review_spec(content):
-    """從『規格：xxx｜評價…』的內容開頭取出規格；沒有規格就回空字串。"""
-    s = str(content).strip()
-    if s.startswith("規格："):
-        return s[3:].split("｜", 1)[0].strip()
-    return ""
+    """從評價內容抓出『規格/款式』。容錯處理多種格式：
+    - 半形或全形冒號（規格: / 規格：）
+    - 規格 可能不在第一行（跨行搜尋）
+    - 款式常放在中括號內，例『規格: [三層款 可拆卸 十合一]黑色』→ 取『三層款 可拆卸 十合一』
+    - 自家格式『規格：xxx｜評價…』→ 取 ｜ 前段
+    抓不到回空字串。"""
+    s = str(content)
+    m = re.search(r'規格\s*[：:]\s*([^\n]+)', s)
+    if not m:
+        return ""
+    val = m.group(1).strip()
+    if "｜" in val:                       # 自家格式：規格：xxx｜
+        return val.split("｜", 1)[0].strip()[:30]
+    mb = re.search(r'\[([^\]]+)\]', val)  # 蝦皮款式多在中括號內
+    if mb:
+        return mb.group(1).strip()[:30]
+    for sep in ["|", "，", ",", "。", " "]:
+        if sep in val:
+            val = val.split(sep, 1)[0]
+            break
+    return val.strip()[:30]
 
 def _excel_align_left_top(ws):
     """把 openpyxl 工作表每一格設成靠左、靠上對齊（並自動換行）。"""

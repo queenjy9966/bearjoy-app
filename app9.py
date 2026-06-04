@@ -101,6 +101,11 @@ st.markdown("""
     [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: #4A4238 !important; font-weight: 700 !important; }
 
     [data-testid="stSidebar"] { background-color: #F0EDE5 !important; }
+    /* 側欄標題（✦ BearJoy 導航）不要左側線條 */
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] h4, [data-testid="stSidebar"] h5, [data-testid="stSidebar"] h6 {
+        border-left: none !important; padding-left: 0 !important;
+    }
     .stButton>button { background-color: #798571 !important; color: white !important; border-radius: 6px !important; }
     [data-testid="stImage"] { display: flex; justify-content: center; }
     /* ✨ 勾選框文字一排不換行（回購語氣／保存截圖） */
@@ -1302,8 +1307,16 @@ if doc:
                 existing_row = next((r for r in cfg_data if len(r) > 0 and r[0] == f'coupon_{slot_id}'), None)
                 if existing_row and len(existing_row) > 1:
                     try:
-                        chunks = [c for c in existing_row[1:] if c]
-                        base_img = base64_chunks_to_img(chunks)
+                        # ✨ 抗閃爍/加速：解碼過的底圖快取在 session，之後每次互動(換日期/拖曳/調大小)
+                        #    都直接重用，不再重新解碼大圖，畫面更新快很多、不再閃半天。
+                        sig = (len(existing_row), existing_row[1][:32])
+                        cache = st.session_state.setdefault("_decoded_imgs", {})
+                        ent = cache.get(slot_id)
+                        if ent and ent[0] == sig:
+                            base_img = ent[1]
+                        else:
+                            base_img = base64_chunks_to_img([c for c in existing_row[1:] if c])
+                            cache[slot_id] = (sig, base_img)
                         st.image(base_img, width=300)
                     except Exception: st.warning("圖片載入異常，請重新上傳")
                 else:
@@ -1311,7 +1324,7 @@ if doc:
 
                 # ✨ 下載鈕（窄）＋長按提示：同一排；提示文字與下載鍵框上下置中、不重疊
                 if base_img:
-                    c_dl, c_hint = st.columns([0.9, 1.5])
+                    c_dl, c_hint = st.columns([0.8, 1.7])
                     with c_dl:
                         # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）
                         st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span>', unsafe_allow_html=True)
@@ -1320,7 +1333,7 @@ if doc:
                         base_img.save(buf, format="PNG")
                         st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
                     with c_hint:
-                        st.markdown("<p style='font-size:11px; color:#A39C90; margin:0; height:42px; display:flex; align-items:center; white-space:nowrap;'>💡 手機版可「長按圖片」儲存</p>", unsafe_allow_html=True)
+                        st.markdown("<p style='font-size:13.5px; color:#8A8275; margin:0; height:42px; display:flex; align-items:center; white-space:nowrap;'>💡 手機版可「長按圖片」儲存</p>", unsafe_allow_html=True)
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 

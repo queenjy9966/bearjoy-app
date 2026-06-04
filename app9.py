@@ -20,6 +20,13 @@ try:
 except Exception:
     HAS_IMG_COORDS = False
 
+# 畫布編輯元件：可用滑鼠/手指「拖曳移動＋拉角縮放＋轉角旋轉」文字（沒裝成功就退回拉桿）
+try:
+    from streamlit_drawable_canvas import st_canvas
+    HAS_CANVAS = True
+except Exception:
+    HAS_CANVAS = False
+
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -85,7 +92,7 @@ st.set_page_config(page_title="BearJoy 智能客服", page_icon="✦", layout="w
 st.markdown("""
 <style>
     .stApp { background-color: #FAF8F5; }
-    .block-container { padding-top: 3.5rem !important; padding-bottom: 1rem !important; max-width: 1100px; }
+    .block-container { padding-top: 2.9rem !important; padding-bottom: 1rem !important; max-width: 1100px; }
 
     /* ✨ 字級層次：大標 → 中標 → 小標 → 註解小字，一眼分得出輕重 */
     /* ✨ 小標統一：所有區塊標題同一大小、同一左側細色條（與 VIP 顧客戰情室一致，前面不放 emoji 圖案） */
@@ -1387,31 +1394,40 @@ if doc:
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
-                            c_sz, c_rot = st.columns(2)
-                            c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                            font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
-                            rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
+                            # 🎚️ 畫布抓不到文字時可勾此切回拉桿（沒有畫布元件就一律拉桿）
+                            use_bars = (not HAS_CANVAS) or st.checkbox(
+                                "🎚️ 改用拉桿微調（畫布抓不到文字時勾這裡）", key=f"usebars_{slot_id}")
 
-                            # 📍 位置來源：可拖曳定位就用 session_state 記住座標；沒有元件才退回拉桿
-                            if HAS_IMG_COORDS:
+                            if use_bars:
+                                c_sz, c_rot = st.columns(2)
+                                c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
+                                rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
+                                if HAS_IMG_COORDS:
+                                    x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
+                                    y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
+                                else:
+                                    c_x, c_y = st.columns(2)
+                                    c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
+                                    x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
+                                    y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
+                            else:
+                                # 畫布模式：大小/旋轉/位置都由畫布操作，存在非 widget 的 session 鍵
+                                font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
+                                rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
                                 x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                                 y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            else:
-                                c_x, c_y = st.columns(2)
-                                c_x.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
-                                x_pos = c_x.slider("↔️ 左右", 0, base_img.width, def_x, key=f"x_{slot_id}")
-                                y_pos = c_y.slider("↕️ 上下", 0, base_img.height, def_y, key=f"y_{slot_id}")
 
                             preview_img = base_img.copy().convert("RGBA")
                             font = get_chinese_font(font_size)
-                            
+
                             dummy_draw = ImageDraw.Draw(Image.new('RGBA', (1,1)))
                             try:
                                 bbox = dummy_draw.multiline_textbbox((0, 0), text_input, font=font, align="center")
                                 text_w = bbox[2] - bbox[0]
                                 text_h = bbox[3] - bbox[1]
                             except:
-                                text_w, text_h = 200, 100 
+                                text_w, text_h = 200, 100
 
                             txt_layer_w = int(text_w * 2.5)
                             txt_layer_h = int(text_h * 2.5)
@@ -1429,8 +1445,70 @@ if doc:
 
                             preview_img.alpha_composite(rotated_txt, (paste_x, paste_y))
                             final_img_to_save = preview_img.convert("RGB")
-                            
-                            if HAS_IMG_COORDS:
+
+                            if not use_bars:
+                                # 🖱️ 畫布編輯：拖曳=移動、拉四角=縮放、轉上方圓點=旋轉；放開才套用（過程不閃）
+                                st.markdown("**👇 用滑鼠／手指操作：先點一下文字選取它，再拖曳移動、拉四角縮放、轉上方圓點旋轉**")
+                                disp_w = 340
+                                cscale = disp_w / base_img.width
+                                disp_h = max(1, int(base_img.height * cscale))
+                                bg_disp = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
+                                # 文字做成「未旋轉」透明 PNG，當作畫布上可操作的物件
+                                cfont = get_chinese_font(max(10, int(font_size * cscale)))
+                                _dd = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+                                try:
+                                    _bb = _dd.multiline_textbbox((0, 0), text_input or "日期", font=cfont, align="center")
+                                    tw_, th_ = max(8, _bb[2] - _bb[0]), max(8, _bb[3] - _bb[1])
+                                except Exception:
+                                    tw_, th_ = 90, 44
+                                _p = 8
+                                txt_png = Image.new("RGBA", (tw_ + _p * 2, th_ + _p * 2), (255, 255, 255, 0))
+                                ImageDraw.Draw(txt_png).multiline_text((_p, _p), text_input or "日期", fill=text_color, font=cfont, align="center")
+                                _b = BytesIO(); txt_png.save(_b, format="PNG")
+                                data_url = "data:image/png;base64," + base64.b64encode(_b.getvalue()).decode()
+                                ow, oh = txt_png.size
+                                left0 = x_pos * cscale - ow / 2
+                                top0 = y_pos * cscale - oh / 2
+                                init_drawing = {"version": "4.4.0", "objects": [{
+                                    "type": "image", "src": data_url,
+                                    "left": float(left0), "top": float(top0),
+                                    "width": ow, "height": oh, "scaleX": 1.0, "scaleY": 1.0,
+                                    "angle": float(rotation_angle),
+                                    "selectable": True, "hasControls": True, "hasBorders": True,
+                                }]}
+                                try:
+                                    cres = st_canvas(
+                                        background_image=bg_disp, initial_drawing=init_drawing,
+                                        drawing_mode="transform", update_streamlit=True,
+                                        height=disp_h, width=disp_w, display_toolbar=False,
+                                        key=f"cv_{slot_id}")
+                                except Exception:
+                                    cres = None
+                                if cres is not None and getattr(cres, "json_data", None):
+                                    objs = cres.json_data.get("objects", [])
+                                    if objs:
+                                        o = objs[0]
+                                        sx = float(o.get("scaleX", 1) or 1)
+                                        sy = float(o.get("scaleY", 1) or 1)
+                                        ang = float(o.get("angle", 0) or 0)
+                                        ow2 = float(o.get("width", ow) or ow)
+                                        oh2 = float(o.get("height", oh) or oh)
+                                        l2 = float(o.get("left", left0)); t2 = float(o.get("top", top0))
+                                        cx = l2 + (ow2 * sx) / 2; cy = t2 + (oh2 * sy) / 2
+                                        new_x = max(0, min(int(cx / cscale), base_img.width))
+                                        new_y = max(0, min(int(cy / cscale), base_img.height))
+                                        new_size = max(10, min(int(round(font_size * sx)), 200))
+                                        na = ((ang + 180) % 360) - 180
+                                        new_rot = max(-180, min(int(round(na)), 180))
+                                        if (abs(new_x - x_pos) >= 2 or abs(new_y - y_pos) >= 2
+                                                or new_size != font_size or new_rot != rotation_angle):
+                                            st.session_state[f"px_{slot_id}"] = new_x
+                                            st.session_state[f"py_{slot_id}"] = new_y
+                                            st.session_state[f"csz_{slot_id}"] = new_size
+                                            st.session_state[f"crot_{slot_id}"] = new_rot
+                                            st.rerun()
+                                st.caption("拖曳=移動、拉四角=縮放、轉上方圓點=旋轉；放開後即套用並記住（過程不會閃）。")
+                            elif HAS_IMG_COORDS:
                                 st.markdown("**👇 在圖片上按住拖曳，放開處即為日期位置：**")
                                 disp_w = 320
                                 disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))

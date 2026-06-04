@@ -531,6 +531,15 @@ def _safe_filename(s):
     s = re.sub(r'[\\/:*?"<>|\n\r\t]+', " ", str(s)).strip()
     return (s[:80] or "未命名")
 
+def section_block(emoji, title, desc=""):
+    """大區塊標題色塊：在頁面上用米色色塊＋左色條清楚區分各大功能。"""
+    d = f"<div style='font-size:11.5px;color:#8A8275;margin-top:3px;line-height:1.4;'>{desc}</div>" if desc else ""
+    st.markdown(
+        f"<div style='background:#EFEBE2;border-left:6px solid #B7A98C;padding:11px 16px;"
+        f"border-radius:10px;margin:16px 0 12px 0;'>"
+        f"<span style='font-size:17px;font-weight:bold;color:#4A4238;letter-spacing:.5px;'>{emoji} {title}</span>{d}</div>",
+        unsafe_allow_html=True)
+
 def upload_img_to_drive(img, filename, folder_id=DRIVE_FOLDER_ID):
     """把 PIL 圖片上傳到指定 Google Drive 資料夾；回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
     try:
@@ -1227,15 +1236,14 @@ if doc:
                 st.session_state.refresh_review_pool = False
             review_pool = st.session_state.review_pool
 
-            # 📊 功能2：好評關鍵字洞察（依規格分析）
-            st.subheader("顧客最愛優點分析")
-            st.caption("選規格 → 統整該款顧客最愛優點，直接拿去寫標題賣點。")
+            # 📊 大區塊一：顧客最愛優點分析
+            section_block("📊", "顧客最愛優點分析", "選規格 → 統整該款顧客最愛優點，直接拿去寫蝦皮標題與賣點。")
             _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
-            sel_specs = st.multiselect(
-                "選規格（可複選＝合併同一類；可直接打字搜尋；留空＝用下方關鍵字或全部）",
-                _specs_all, key="insight_specs")
-            kw = st.text_input("或：用關鍵字一次分析（免逐一勾選）",
-                               placeholder="例：三層 → 分析所有含「三層」的款", key="insight_kw").strip()
+            fic1, fic2 = st.columns(2)
+            sel_specs = fic1.multiselect("選規格（可複選＝合併；可打字搜尋；留空＝全部）",
+                                         _specs_all, key="insight_specs")
+            kw = fic2.text_input("或用關鍵字一次分析", placeholder="例：三層 → 所有含三層的款",
+                                 key="insight_kw").strip()
             if st.button("🔍 開始分析", use_container_width=True):
                 if not api_key:
                     st.error("需要 API 金鑰才能分析。")
@@ -1306,10 +1314,8 @@ if doc:
                         except Exception as e:
                             st.error(f"雲端同步失敗：{e}")
 
-            # 🖼️ 功能4：一鍵生成顧客好評圖（多尺寸、兩種版型）
-            st.divider()
-            st.markdown("#### 一鍵生成「顧客好評圖」")
-            st.caption("貼蝦皮置頂、IG、FB、LINE，提升新客下單信任感。")
+            # 🖼️ 大區塊二：一鍵生成顧客好評圖
+            section_block("🖼️", "一鍵生成「顧客好評圖」", "貼蝦皮置頂、IG、FB、LINE，提升新客下單信任感。")
             SIZE_PRESETS = {
                 "正方形 1:1（IG / 蝦皮 1080×1080）": (1080, 1080),
                 "直式 9:16（限動・Reels 1080×1920）": (1080, 1920),
@@ -1463,10 +1469,8 @@ if doc:
                 except Exception as e:
                     st.error(f"產生失敗：{e}")
 
-            # 📥 把已保存的評價原圖打包成 PNG（ZIP）下載，給美編用（檔名＝日期 評價圖-規格）
-            st.divider()
-            st.markdown("#### 📥 下載評價原圖（PNG，給美編用）")
-            st.caption("把已保存的顧客評價原圖打包成 ZIP 下載，每張 PNG 檔名＝「日期 評價圖-規格」。")
+            # 📥 大區塊三：下載評價原圖（給美編用）
+            section_block("📥", "下載評價原圖（PNG，給美編用）", "把已保存的顧客評價原圖打包成 ZIP，每張 PNG 檔名＝「日期 評價圖-規格」。")
             if st.button("📦 打包下載原圖（ZIP）", use_container_width=True):
                 try:
                     import zipfile

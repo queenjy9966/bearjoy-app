@@ -142,6 +142,18 @@ st.markdown("""
         margin: -4px 0 6px 2px !important;
     }
     [data-testid="stPopover"] button:hover { background: #E6E2D8 !important; color: #4A4238 !important; }
+    /* ✨ 功能卡片：整塊卡其底色＋外框，標題與內容同屬一個功能面板（沉睡客/優點分析/好評圖/VIP 一致） */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #EFEBE2 !important;
+        border: 1px solid #DDD6C8 !important;
+        border-radius: 14px !important;
+        padding: 4px 14px 12px 14px !important;
+        margin-bottom: 14px !important;
+    }
+    /* 卡片內的可捲動框維持白底，與卡其卡片區隔（縮圖/評價清單看得清楚） */
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #FFFFFF !important;
+    }
     /* ✨ 勾選框文字一排不換行（回購語氣／保存截圖） */
     [data-testid="stCheckbox"] label { white-space: nowrap !important; }
     [data-testid="stCheckbox"] label p { white-space: nowrap !important; font-size: 13.5px !important; margin: 0 !important; }
@@ -550,16 +562,8 @@ def _safe_filename(s):
     return (s[:80] or "未命名")
 
 def section_block(emoji, title, desc=""):
-    """大區塊標題色塊：米色色塊＋左色條，只放標題；補充說明收進可點開的「ⓘ 說明」，文字完整不截斷。"""
-    st.markdown(
-        f"<div style='background:#EFEBE2;border-left:6px solid #B7A98C;padding:11px 16px;"
-        f"border-radius:10px;margin:4px 0 10px 0;'>"
-        f"<span style='font-size:17px;font-weight:bold;color:#4A4238;letter-spacing:.5px;'>{emoji} {title}</span></div>",
-        unsafe_allow_html=True)
-    if desc:
-        with st.popover("❔"):
-            st.markdown(f"<div style='font-size:13.5px;color:#4A4238;line-height:1.6;max-width:520px;'>{desc}</div>",
-                        unsafe_allow_html=True)
+    """大區塊標題：左色條標題＋旁邊原生「?」說明（hover 顯示，與『保存截圖』的 ? 一致）。"""
+    st.subheader(f"{emoji} {title}", help=(desc or None), anchor=False)
 
 def upload_img_to_drive(img, filename, folder_id=DRIVE_FOLDER_ID):
     """把 PIL 圖片上傳到指定 Google Drive 資料夾；回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
@@ -1450,7 +1454,11 @@ if doc:
                         else:
                             st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
 
-                if st.button("✨ 產生好評圖", type="primary"):
+                gcol, zcol = st.columns([3, 2])
+                gen_clicked = gcol.button("✨ 產生好評圖", type="primary", use_container_width=True)
+                zip_clicked = zcol.button("📦 原圖打包(ZIP)", use_container_width=True,
+                                          help="想拿原圖去美編？按這裡把已保存的顧客評價原圖打包成 ZIP 下載，每張 PNG 檔名＝「日期 評價圖-規格」。")
+                if gen_clicked:
                     try:
                         card = None
                         if template_label.startswith("版型A"):
@@ -1491,9 +1499,8 @@ if doc:
                     except Exception as e:
                         st.error(f"產生失敗：{e}")
 
-                # 📥 打包下載評價原圖（歸在「生成好評圖」區內，給美編用）
-                st.markdown("<p style='font-size:12.5px;color:#8A8275;margin:10px 0 4px 2px;'>📥 想拿原圖去美編？打包下載（每張 PNG 檔名＝日期 評價圖-規格）</p>", unsafe_allow_html=True)
-                if st.button("📦 打包下載原圖（ZIP）", use_container_width=True):
+                # 📥 打包下載評價原圖（按鈕在上方與「產生好評圖」同排，給美編用）
+                if zip_clicked:
                     try:
                         import zipfile
                         mat = get_or_create_ws(doc, "評價截圖素材").get_all_values()
@@ -1700,10 +1707,7 @@ if doc:
                             # 操作方式：🎨 畫布直接編輯（Canva 式）／三模式拖曳／拉桿
                             x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                             y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            use_canvas = False
-                            if HAS_CANVAS:
-                                use_canvas = st.checkbox("🎨 用畫布直接編輯（直接拖文字、拉四角縮放、轉圓點旋轉）",
-                                                         value=True, key=f"usecv_{slot_id}")
+                            use_canvas = HAS_CANVAS  # 直接用畫布，不需勾選
                             if use_canvas or HAS_IMG_COORDS:
                                 font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
                                 rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
@@ -1724,7 +1728,7 @@ if doc:
                                 base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
 
                             if use_canvas:
-                                st.caption("🎨 直接拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉（放開後即套用；若底圖空白請取消勾選改用三模式）")
+                                st.caption("🎨 直接拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉；調好後按「✅ 確認儲存」即可（拖移過程不會閃，放開後才套用）")
                                 disp_w = 340
                                 cscale = disp_w / base_img.width
                                 disp_h = max(1, int(base_img.height * cscale))
@@ -1737,8 +1741,9 @@ if doc:
                                     "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
                                 }]}
                                 try:
+                                    # update_streamlit=False：拖移過程不回傳、不重畫（不閃）；按「確認儲存」等動作時才讀取目前位置
                                     cres = st_canvas(background_image=bg, initial_drawing=init,
-                                                     drawing_mode="transform", update_streamlit=True,
+                                                     drawing_mode="transform", update_streamlit=False,
                                                      height=disp_h, width=disp_w, display_toolbar=False,
                                                      key=f"cv_{slot_id}")
                                 except Exception:

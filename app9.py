@@ -1392,6 +1392,34 @@ if doc:
                     ma_specs = fa1.multiselect("選規格（可複選；留空＝全部）",
                                                _specs_all, key="matimg_specs")
                     ma_kw = fa2.text_input("或用關鍵字篩選", placeholder="例：三層", key="matimg_kw").strip()
+                    # 🔍 AI 補抓規格：對「無規格」的舊截圖，用 AI 直接從圖片讀出規格並補進素材
+                    _no_spec = [r for r in mat_pool if not _mat_spec(r)]
+                    if _no_spec and st.button(f"🔍 AI 補抓規格（{len(_no_spec)} 張沒規格的截圖）", key="ai_fill_spec"):
+                        if not api_key:
+                            st.error("需要 API 金鑰才能補抓。")
+                        else:
+                            try:
+                                ws_mat2 = get_or_create_ws(doc, "評價截圖素材")
+                                idmap = {rr[0]: i + 1 for i, rr in enumerate(ws_mat2.get_all_values()) if rr and rr[0]}
+                                done = 0
+                                with st.spinner(f"AI 正在從圖片補抓 {len(_no_spec)} 張的規格…"):
+                                    for r in _no_spec:
+                                        try:
+                                            im = base64_chunks_to_img([c for c in r[1:] if c])
+                                            sp = (gemini_generate(api_key, ["只回答這張蝦皮評價截圖中顧客購買的『規格/分類/款式』的完整文字（含中括號與顏色），例如：[三層款 可拆卸 十合一]黑色。找不到就只回『無』。只回規格本身，不要任何多餘文字。", im]) or "").strip()
+                                            sp = sp.splitlines()[0].strip() if sp else ""
+                                            if sp and sp != "無" and idmap.get(r[0]):
+                                                base = r[0].split("|||")[0]
+                                                ws_mat2.update_cell(idmap[r[0]], 1, f"{base}|||{sp[:40]}")
+                                                done += 1
+                                            time.sleep(2)
+                                        except Exception:
+                                            continue
+                                st.session_state.refresh_mat_pool = True
+                                st.success(f"已補抓 {done} 張的規格 ✅ 自動重新整理中…")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"補抓失敗：{e}")
                     def _mat_match(r):
                         sp = _mat_spec(r)
                         if ma_specs:
@@ -1456,8 +1484,7 @@ if doc:
 
                 gcol, zcol = st.columns(2)
                 gen_clicked = gcol.button("✨ 產生好評圖", use_container_width=True)
-                zip_clicked = zcol.button("📦 原圖打包(ZIP)", use_container_width=True,
-                                          help="想拿原圖去美編？按這裡把已保存的顧客評價原圖打包成 ZIP 下載，每張 PNG 檔名＝「日期 評價圖-規格」。")
+                zip_clicked = zcol.button("📦 原圖打包(ZIP)", use_container_width=True)
                 if gen_clicked:
                     try:
                         card = None
@@ -1707,13 +1734,10 @@ if doc:
                             # 操作方式：🎨 畫布直接編輯（Canva 式）／三模式拖曳／拉桿
                             x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                             y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            use_canvas = HAS_CANVAS  # 直接用畫布，不需勾選
+                            use_canvas = HAS_CANVAS  # 有畫布元件就直接用畫布
                             if use_canvas or HAS_IMG_COORDS:
                                 font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
                                 rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))
-                                if not use_canvas:
-                                    edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
-                                                         horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
                             else:
                                 c_sz, c_rot = st.columns(2)
                                 c_sz.markdown('<span class="slider-pair-anchor" style="display:none;"></span>', unsafe_allow_html=True)
@@ -1727,8 +1751,8 @@ if doc:
                             final_img_to_save, text_w, text_h = _stamp_coupon(
                                 base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
 
+                            canvas_shown = False
                             if use_canvas:
-                                st.caption("🎨 直接拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉；調好後按「✅ 確認儲存」即可（拖移過程不會閃，放開後才套用）")
                                 disp_w = 340
                                 cscale = disp_w / base_img.width
                                 disp_h = max(1, int(base_img.height * cscale))
@@ -1746,29 +1770,34 @@ if doc:
                                                      drawing_mode="transform", update_streamlit=False,
                                                      height=disp_h, width=disp_w, display_toolbar=False,
                                                      key=f"cv_{slot_id}")
-                                except Exception:
+                                    canvas_shown = True
+                                except Exception as _ce:
                                     cres = None
-                                if cres is not None and getattr(cres, "json_data", None):
-                                    objs = cres.json_data.get("objects", [])
-                                    if objs:
-                                        o = objs[0]
-                                        sx = float(o.get("scaleX", 1) or 1)
-                                        ang = float(o.get("angle", 0) or 0)
-                                        lx, ty2 = o.get("left"), o.get("top")
-                                        ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
-                                        if lx is not None and ty2 is not None:
-                                            x_pos = max(0, min(int(lx / cscale), base_img.width))
-                                            y_pos = max(0, min(int(ty2 / cscale), base_img.height))
-                                        font_size = max(10, min(int(round(ofs * sx / cscale)), 200))
-                                        rotation_angle = max(-180, min(int(round(((ang + 180) % 360) - 180)), 180))
-                                        st.session_state[f"px_{slot_id}"] = x_pos
-                                        st.session_state[f"py_{slot_id}"] = y_pos
-                                        st.session_state[f"csz_{slot_id}"] = font_size
-                                        st.session_state[f"crot_{slot_id}"] = rotation_angle
-                                # 用最新值重算實際效果供儲存（存檔以 PIL 字體為準，較清晰）
-                                final_img_to_save, text_w, text_h = _stamp_coupon(
-                                    base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
-                            elif HAS_IMG_COORDS:
+                                    st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），已自動改用『拖曳編輯』。")
+                                if canvas_shown:
+                                    st.caption("🎨 直接拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉；調好後按「✅ 確認儲存」（拖移過程不閃，放開後才套用）")
+                                    if cres is not None and getattr(cres, "json_data", None):
+                                        objs = cres.json_data.get("objects", [])
+                                        if objs:
+                                            o = objs[0]
+                                            sx = float(o.get("scaleX", 1) or 1)
+                                            ang = float(o.get("angle", 0) or 0)
+                                            lx, ty2 = o.get("left"), o.get("top")
+                                            ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
+                                            if lx is not None and ty2 is not None:
+                                                x_pos = max(0, min(int(lx / cscale), base_img.width))
+                                                y_pos = max(0, min(int(ty2 / cscale), base_img.height))
+                                            font_size = max(10, min(int(round(ofs * sx / cscale)), 200))
+                                            rotation_angle = max(-180, min(int(round(((ang + 180) % 360) - 180)), 180))
+                                            st.session_state[f"px_{slot_id}"] = x_pos
+                                            st.session_state[f"py_{slot_id}"] = y_pos
+                                            st.session_state[f"csz_{slot_id}"] = font_size
+                                            st.session_state[f"crot_{slot_id}"] = rotation_angle
+                                    final_img_to_save, text_w, text_h = _stamp_coupon(
+                                        base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
+                            if (not canvas_shown) and HAS_IMG_COORDS:
+                                edit_mode = st.radio("操作", ["✋ 移動", "🔍 放大縮小", "🔄 旋轉"],
+                                                     horizontal=True, key=f"mode_{slot_id}", label_visibility="collapsed")
                                 hint = {"✋ 移動": "在圖上按住拖曳 → 文字移到放開處",
                                         "🔍 放大縮小": "從文字往外拖＝放大、往中心拖＝縮小",
                                         "🔄 旋轉": "往哪個方向拖，文字就轉向那邊"}.get(edit_mode, "")
@@ -1806,7 +1835,7 @@ if doc:
                                                 changed = True
                                         if changed:
                                             st.rerun()
-                            else:
+                            elif not canvas_shown:
                                 st.session_state[f"px_{slot_id}"] = x_pos
                                 st.session_state[f"py_{slot_id}"] = y_pos
                                 st.image(final_img_to_save, width=320)

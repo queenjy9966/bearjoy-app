@@ -20,13 +20,6 @@ try:
 except Exception:
     HAS_IMG_COORDS = False
 
-# ✨ 畫布拖曳元件：可「即時拖曳、看著文字滑動軌跡」定位（沒裝成功就退回上面的點圖／拉桿）
-try:
-    from streamlit_drawable_canvas import st_canvas
-    HAS_CANVAS = True
-except Exception:
-    HAS_CANVAS = False
-
 # ==========================================
 # 0. 系統資源：自動下載高質感中文字體
 # ==========================================
@@ -110,9 +103,14 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #F0EDE5 !important; }
     .stButton>button { background-color: #798571 !important; color: white !important; border-radius: 6px !important; }
     [data-testid="stImage"] { display: flex; justify-content: center; }
-    /* ✨ 勾選框文字一排不換行（VIP語氣／保存截圖） */
+    /* ✨ 勾選框文字一排不換行（回購語氣／保存截圖） */
     [data-testid="stCheckbox"] label { white-space: nowrap !important; }
     [data-testid="stCheckbox"] label p { white-space: nowrap !important; font-size: 13.5px !important; margin: 0 !important; }
+    /* ✨ 折價券下載鍵：維持原本窄寬度（不套用全站 240px），讓旁邊長按提示不被擠到重疊 */
+    div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) .stDownloadButton > button {
+        width: auto !important; min-width: 84px !important; max-width: 140px !important;
+        padding: 0 14px !important;
+    }
 
     .main-title-box {
         background: #EFEBE2;
@@ -182,7 +180,7 @@ st.markdown("""
         background: #687560 !important; color: #FFFFFF !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button:disabled {
-        background: #C9C4B8 !important; color: #FFFFFF !important;
+        opacity: 0.45 !important; color: #FFFFFF !important;
     }
     /* ✨ 三鍵大地色系（每個版位都一致）：↑上移＝卡其、↓下移＝大地綠、✕刪除＝大地紅，白字 */
     /* ↑ 上移：卡其 */
@@ -333,12 +331,16 @@ st.markdown("""
         background: #FFFFFF !important; overflow: visible !important;
     }
     div[data-testid="stExpander"] > details > summary { border-radius: 8px !important; }
-    /* ✨ 側邊欄折疊標題（💡 開啟太慢…）：字縮小、強制一排不換行、文字在方框內上下置中 */
+    /* ✨ 側邊欄折疊標題（💡 開啟太慢…）：字縮小、強制一排不換行、文字在方框內「上下置中」 */
     [data-testid="stSidebar"] div[data-testid="stExpander"] > details > summary {
-        display: flex !important; align-items: center !important; min-height: 40px !important;
+        display: flex !important; align-items: center !important;
+        min-height: 42px !important; padding-top: 0 !important; padding-bottom: 0 !important;
+    }
+    [data-testid="stSidebar"] div[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
+        display: flex !important; align-items: center !important; margin: 0 !important;
     }
     [data-testid="stSidebar"] div[data-testid="stExpander"] summary p {
-        font-size: 12px !important; white-space: nowrap !important;
+        font-size: 12px !important; white-space: nowrap !important; line-height: 1.2 !important;
         overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important;
         display: flex !important; align-items: center !important;
     }
@@ -523,8 +525,9 @@ def _text_w(draw, text, font):
 
 def _render_content(reviews, template):
     """回傳一張內容圖（米底），之後再縮放置中到目標尺寸。
-    ✨ 每則評價：左上角放 ★★★★★ 與帳號，下方為內文（左對齊）。
-    ✨ 卡片高度改用『實際量測的文字高度』決定，文字一定包在框內、不會超出。"""
+    ✨ 每則評價：左上角放 ★★★★★、帳號、購買規格（若有），下方為內文（左對齊）。
+    ✨ 卡片高度改用『實際量測的文字高度』決定，文字一定包在框內、不會超出。
+    reviews 可為 (帳號, 內容) 或 (帳號, 內容, 購買規格)。"""
     BW, pad = 1000, 50
     stars = "★ ★ ★ ★ ★"
     is_quote = (template == "quote")
@@ -533,25 +536,38 @@ def _render_content(reviews, template):
     title_font = get_chinese_font(52 if is_quote else 50)
     body_font = get_chinese_font(40 if is_quote else 34)
     acc_font = get_chinese_font(28)
+    spec_font = get_chinese_font(26)
     star_font = get_chinese_font(30)
 
     line_gap = 12          # 內文行距
     inner = 36             # 卡片左右內留白
     pads_v = 28            # 卡片上下內留白
-    head_h = 78            # 星星列＋帳號列 高度
+    star_h, acc_h, spec_h = 38, 38, 40
     gap_between = 30       # 卡片之間距
     max_chars = 18 if is_quote else 22
 
-    blocks = [(_mask_account(a), "\n".join(_wrap_cjk(b, max_chars))) for a, b in reviews]
+    def norm(item):
+        a, b = item[0], item[1]
+        s = str(item[2]).strip() if len(item) >= 3 else ""
+        if s in ("無", "解析失敗", "未知", "None"):
+            s = ""
+        if len(s) > 24:
+            s = s[:24] + "…"
+        return _mask_account(a), s, "\n".join(_wrap_cjk(b, max_chars))
+
+    blocks = [norm(it) for it in reviews]
 
     def measure_h(text, font):
         try:
             bb = dummy.multiline_textbbox((0, 0), text, font=font, spacing=line_gap)
             return bb[3] - bb[1]
         except Exception:
-            return (text.count("\n") + 1) * (body_font.size + line_gap if hasattr(body_font, "size") else 50)
+            return (text.count("\n") + 1) * 50
 
-    heights = [pads_v + head_h + measure_h(body, body_font) + pads_v for _, body in blocks]
+    heights = []
+    for _, spec, body in blocks:
+        h = pads_v + star_h + acc_h + (spec_h if spec else 0) + 10 + measure_h(body, body_font) + pads_v
+        heights.append(h)
 
     title = "顧客真實心得" if is_quote else "BearJoy 顧客真實好評"
     top = 150
@@ -561,7 +577,7 @@ def _render_content(reviews, template):
     d.text(((BW - _text_w(d, title, title_font)) / 2, 55), title, font=title_font, fill="#4A4238")
 
     y = top
-    for (acc, body), h in zip(blocks, heights):
+    for (acc, spec, body), h in zip(blocks, heights):
         cb = y + h
         if not is_quote:
             try:
@@ -570,11 +586,15 @@ def _render_content(reviews, template):
                 d.rectangle([pad, y, BW - pad, cb], fill="#FFFFFF", outline="#E6E2D8")
         x0 = pad + inner
         ty = y + pads_v
-        # 左上角：星星 + 帳號
+        # 左上角：星星 + 帳號（+ 購買規格）
         d.text((x0, ty), stars, font=star_font, fill="#E0A96D")
-        d.text((x0, ty + 40), f"@{acc}", font=acc_font, fill="#A0998C")
+        d.text((x0, ty + star_h), f"@{acc}", font=acc_font, fill="#A0998C")
+        cy = ty + star_h + acc_h
+        if spec:
+            d.text((x0, cy), f"購買規格：{spec}", font=spec_font, fill="#8A8275")
+            cy += spec_h
         # 內文（左對齊、實測高度，不會超出框）
-        d.multiline_text((x0, ty + head_h), body, font=body_font, fill="#4A4238", spacing=line_gap)
+        d.multiline_text((x0, cy + 10), body, font=body_font, fill="#4A4238", spacing=line_gap)
         y = cb + gap_between
     return img
 
@@ -828,6 +848,8 @@ if doc:
                     (客戶帳號)
                     [REVIEW]
                     (評價內容)
+                    [SPEC]
+                    (顧客實際購買的規格/款式，讀圖片中「規格」欄位的文字；若圖片沒有顯示規格就只寫「無」)
                     [PUBLIC]
                     (賣場評價回覆)
                     [PRIVATE]
@@ -853,7 +875,8 @@ if doc:
 
                             # ✨ 穩定性：用安全解析，AI 少打一個標籤也不會整個崩潰
                             acc = _extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]) or "未知"
-                            rev = _extract_section(res_text, "[REVIEW]", ["[PUBLIC]"]) or "解析失敗"
+                            rev = _extract_section(res_text, "[REVIEW]", ["[SPEC]", "[PUBLIC]"]) or "解析失敗"
+                            spec = _extract_section(res_text, "[SPEC]", ["[PUBLIC]"]) or ""
                             pub = _extract_section(res_text, "[PUBLIC]", ["[PRIVATE]"]) or "解析失敗"
                             priv = _extract_section(res_text, "[PRIVATE]", []) or "解析失敗"
                             # 🎁 功能1：私訊結尾自動附上回購優惠碼，把「感謝」變成「再買一次」
@@ -873,21 +896,29 @@ if doc:
                             with cards_container:
                                 with st.expander(f"✨ 客戶帳號：{acc}", expanded=True):
                                     st.markdown(f"**📝 原始評價內容:** {rev}")
+                                    if spec.strip() and spec.strip() != "無":
+                                        st.markdown(f"**🛍 購買規格:** {spec.strip()}")
                                     st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
                                     st.code(pub, language="text")
                                     st.markdown("**💌 私訊回覆 (點擊右上角複製):**")
                                     st.code(priv, language="text")
                             
-                            results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv])
+                            results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv, spec.strip()])
 
                     if doc and results_to_cloud:
                         try:
                             ws_history = get_or_create_ws(doc, "回覆紀錄")
                             existing = ws_history.get_all_values()
                             if len(existing) == 0:
-                                header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"]
+                                header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆", "購買規格"]
                                 ws_history.append_row(header)
                                 existing = [header]
+                            elif "購買規格" not in existing[0]:
+                                # 舊表沒有「購買規格」欄就補上，確保新資料對齊（規格在最後一欄，不影響原欄位）
+                                try:
+                                    ws_history.update_cell(1, len(existing[0]) + 1, "購買規格")
+                                except Exception:
+                                    pass
                             # 🔁 功能5：用 (帳號, 評價內容) 去重，同一筆評價不重複計算
                             seen_pairs = set((str(r[1]).strip(), str(r[2]).strip()) for r in existing[1:] if len(r) > 2)
                             new_rows, dup_count = [], 0
@@ -1048,8 +1079,12 @@ if doc:
                         st.error(f"分析失敗：{e}")
             if st.session_state.get("insight_result"):
                 st.markdown(st.session_state.insight_result)
-                _ins_lines = [ln.rstrip() for ln in str(st.session_state.insight_result).splitlines() if ln.strip()]
-                df_insight = pd.DataFrame({"顧客最愛優點分析": _ins_lines})
+                # 📌 多一欄「品名」才知道是哪一類商品（不用太細，一類產品填一個就好）；分析內容整段放同一格
+                insight_product = st.text_input("品名／品類（會寫進 Excel 第一欄，例：保鮮盒、瀝水架；不用太細）", key="insight_product")
+                df_insight = pd.DataFrame([{
+                    "品名": insight_product.strip() if insight_product.strip() else "（未填品名）",
+                    "顧客優點分析": str(st.session_state.insight_result).strip(),
+                }])
                 cin1, cin2 = st.columns(2)
                 with cin1:
                     try:
@@ -1123,7 +1158,8 @@ if doc:
                         hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
                         rows = [r for r in hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
                         rows = rows[::-1][:int(rev_n)]
-                        reviews = [(r[1], r[2]) for r in rows]
+                        # (帳號, 評價內容, 購買規格)；規格在第 6 欄(index 5)，舊資料沒有就空白
+                        reviews = [(r[1], r[2], r[5] if len(r) > 5 else "") for r in rows]
                         if not reviews:
                             st.info("還沒有評價可以做圖，先處理幾筆好評吧！")
                         else:
@@ -1237,16 +1273,18 @@ if doc:
                 else:
                     st.info("此版位目前為空，請先上傳底圖。")
 
-                # ✨ 下載鈕＋長按提示：同一排
+                # ✨ 下載鈕（窄）＋長按提示：同一排；提示文字與下載鍵框上下置中、不重疊
                 if base_img:
-                    c_dl, c_hint = st.columns([0.8, 1.5])
+                    c_dl, c_hint = st.columns([0.9, 1.5])
                     with c_dl:
+                        # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）
+                        st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span>', unsafe_allow_html=True)
                         buf = BytesIO()
                         # ✨ 畫質升級：無損 PNG 下載
                         base_img.save(buf, format="PNG")
-                        st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}", use_container_width=True)
+                        st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
                     with c_hint:
-                        st.markdown("<p style='font-size:11px; color:#A39C90; margin:0; line-height:42px; white-space:nowrap;'>💡 手機版可「長按圖片」儲存</p>", unsafe_allow_html=True)
+                        st.markdown("<p style='font-size:11px; color:#A39C90; margin:0; height:42px; display:flex; align-items:center; white-space:nowrap;'>💡 手機版可「長按圖片」儲存</p>", unsafe_allow_html=True)
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 
@@ -1289,7 +1327,7 @@ if doc:
                             def_color = sv.get("color", "#FFFFFF")
                             def_x = max(0, min(sv.get("x", base_img.width // 2), base_img.width))
                             def_y = max(0, min(sv.get("y", int(base_img.height * 0.7)), base_img.height))
-                            st.caption("💡 換日期超簡單：直接改下方「壓印文字」的日期 → 按儲存即可，位置/大小/顏色會自動記住。")
+                            st.caption("換日期只要改下方文字再按儲存，位置/大小/顏色會自動記住。")
 
                             # ✨ 錨點魔法 2：文字方框與顏色並排
                             c_txt, c_col = st.columns(2)
@@ -1305,8 +1343,8 @@ if doc:
                             font_size = c_sz.slider("📐 大小", 10, 200, def_size, key=f"sz_{slot_id}")
                             rotation_angle = c_rot.slider("🔄 旋轉", -180, 180, def_rot, key=f"rot_{slot_id}")
 
-                            # 📍 位置來源：畫布拖曳 / 點圖定位 都用 session_state 記住座標；都沒有才退回拉桿
-                            if HAS_CANVAS or HAS_IMG_COORDS:
+                            # 📍 位置來源：可拖曳定位就用 session_state 記住座標；沒有元件才退回拉桿
+                            if HAS_IMG_COORDS:
                                 x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                                 y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
                             else:
@@ -1343,55 +1381,8 @@ if doc:
                             preview_img.alpha_composite(rotated_txt, (paste_x, paste_y))
                             final_img_to_save = preview_img.convert("RGB")
                             
-                            if HAS_CANVAS:
-                                st.markdown("**👇 直接拖曳日期文字：電腦用滑鼠、手機用手指，按住文字拖到想要的位置（會即時看著它移動）**")
-                                disp_w = 320
-                                scale = disp_w / base_img.width
-                                disp_h = max(1, int(base_img.height * scale))
-                                bg_disp = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
-                                # 在畫布上放一個可即時拖曳的文字物件（fabric），中心點對齊目前座標
-                                init_drawing = {
-                                    "version": "4.4.0",
-                                    "objects": [{
-                                        "type": "i-text",
-                                        "originX": "center", "originY": "center",
-                                        "left": float(x_pos * scale), "top": float(y_pos * scale),
-                                        "text": text_input if text_input.strip() else "日期",
-                                        "fill": text_color,
-                                        "fontSize": max(8, int(font_size * scale)),
-                                        "angle": float(rotation_angle),
-                                        "fontFamily": "sans-serif", "editable": False,
-                                    }],
-                                }
-                                try:
-                                    canvas_res = st_canvas(
-                                        background_image=bg_disp,
-                                        initial_drawing=init_drawing,
-                                        drawing_mode="transform",
-                                        update_streamlit=True,
-                                        height=disp_h, width=disp_w,
-                                        display_toolbar=False,
-                                        key=f"canvas_{slot_id}",
-                                    )
-                                except Exception:
-                                    canvas_res = None
-                                if canvas_res is not None and getattr(canvas_res, "json_data", None):
-                                    objs = canvas_res.json_data.get("objects", [])
-                                    if objs:
-                                        o = objs[0]
-                                        # originX/originY=center → left/top 即為文字中心（顯示座標）
-                                        new_dx, new_dy = o.get("left"), o.get("top")
-                                        if new_dx is not None and new_dy is not None:
-                                            # 拖曳超過 3px 才更新一次（避免微小誤差造成不停重畫）
-                                            if abs(new_dx - x_pos * scale) >= 3 or abs(new_dy - y_pos * scale) >= 3:
-                                                st.session_state[f"px_{slot_id}"] = max(0, min(int(new_dx / scale), base_img.width))
-                                                st.session_state[f"py_{slot_id}"] = max(0, min(int(new_dy / scale), base_img.height))
-                                                st.rerun()
-                                st.caption("💡 按住文字拖曳即可移動（即時跟手）。放開後下方是實際儲存效果，確認位置後按「✅ 確認儲存」。")
-                                st.markdown("**👇 實際儲存效果預覽：**")
-                                st.image(final_img_to_save, width=320)
-                            elif HAS_IMG_COORDS:
-                                st.markdown("**👇 預覽：電腦用滑鼠、手機用手指「按住拖移」到想要的位置（也可直接點該處）**")
+                            if HAS_IMG_COORDS:
+                                st.markdown("**👇 在圖片上按住拖曳，放開處即為日期位置：**")
                                 disp_w = 320
                                 disp_img = final_img_to_save.resize((disp_w, max(1, int(final_img_to_save.height * disp_w / final_img_to_save.width))))
                                 try:
@@ -1408,12 +1399,10 @@ if doc:
                                             st.session_state[f"px_{slot_id}"] = nx
                                             st.session_state[f"py_{slot_id}"] = ny
                                             st.rerun()
-                                st.caption("💡 在上方圖片「按住並拖曳」可移動日期文字；放開滑鼠／手指後文字就會定位到該處。")
+                                st.caption("不必點到文字，圖片任一處按住拖曳即可；放開後就是最終效果。")
                             else:
-                                st.markdown("**👇 壓印即時預覽:**")
-                                # 🔴 在預覽上疊紅色十字準心＝文字中心點，拉桿一移、十字即時跟著走，方便對準
+                                st.markdown("**👇 壓印預覽（用上方拉桿微調位置）：**")
                                 st.image(_draw_marker(final_img_to_save, x_pos, y_pos), width=320)
-                                st.caption("🔴 紅色十字＝文字中心點。移動「左右／上下」拉桿，十字會即時跟著移動，對準想要的位置再按儲存（十字只是輔助線，不會壓進實際圖片）。")
                         else:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)

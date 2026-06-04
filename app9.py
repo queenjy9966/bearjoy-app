@@ -1077,23 +1077,28 @@ if doc:
             # 📊 功能2：好評關鍵字洞察（依規格分析）
             st.subheader("顧客最愛優點分析")
             st.caption("依『規格（款式）』統整顧客最常稱讚的優點，直接拿去寫該款的蝦皮標題與賣點。")
-            _specs = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
+            _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
+            kw = st.text_input("🔍 規格關鍵字（品項多時先打關鍵字篩選，例：三層、壓縮）", key="insight_kw").strip()
+            _specs = [s for s in _specs_all if kw.lower() in s.lower()] if kw else _specs_all
             sel_specs = st.multiselect(
-                "選規格分析（可複選，勾起來的規格會合併成『同一類』一起分析；不選＝全部）",
+                "選規格分析（可複選，合併成『同一類』一起分析；留空＝分析上方關鍵字符合的全部款，關鍵字也空＝全部）",
                 _specs, key="insight_specs")
             if st.button("🔍 開始分析顧客最愛優點"):
                 if not api_key:
                     st.error("需要 API 金鑰才能分析。")
                 else:
                     try:
-                        if not sel_specs:
-                            reviews = [r[2] for r in review_pool]
-                            used_label = "全部"
-                        else:
+                        if sel_specs:
                             reviews = [r[2] for r in review_pool if _review_spec(r[2]) in sel_specs]
                             used_label = "、".join(sel_specs)
+                        elif kw:
+                            reviews = [r[2] for r in review_pool if kw.lower() in _review_spec(r[2]).lower() and _review_spec(r[2])]
+                            used_label = f"關鍵字「{kw}」"
+                        else:
+                            reviews = [r[2] for r in review_pool]
+                            used_label = "全部"
                         if not reviews:
-                            st.info("這些規格目前還沒有評價可分析。")
+                            st.info("找不到符合的評價可分析（換個關鍵字或規格試試）。")
                         else:
                             with st.spinner(f"AI 正在分析 {len(reviews)} 筆評價..."):
                                 joined = "\n".join(f"- {r}" for r in reviews[:200])

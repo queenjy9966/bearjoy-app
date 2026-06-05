@@ -22,16 +22,34 @@ try:
 except Exception:
     HAS_IMG_COORDS = False
 
-# 相容修補：streamlit 1.39+ 把 image_to_url 從 streamlit.elements.image 移到 image_utils，
-# 導致舊版 streamlit-drawable-canvas(0.9.3) 傳 background_image 時會 AttributeError → 畫布空白。
-# 這裡把函式補回原位置並轉接新簽名（第2參數 width→LayoutConfig），讓畫布恢復正常顯示。
+# 相容修補：新版 streamlit 把 image_to_url 從 streamlit.elements.image 移走，
+# 導致舊版 streamlit-drawable-canvas(0.9.3) 傳 background_image 時拿不到底圖 URL → 畫布一片空白。
+# 解法：把 image_to_url 補回原位置，且「直接把底圖轉成 PNG data URI」回傳，
+# 完全不依賴 streamlit 內部新簽名（之前包成 LayoutConfig 反而讓底圖產生失敗），瀏覽器一定能顯示。
 try:
     import streamlit.elements.image as _st_image_mod
     if not hasattr(_st_image_mod, "image_to_url"):
-        from streamlit.elements.lib.image_utils import image_to_url as _new_image_to_url
-        from streamlit.elements.lib.layout_utils import LayoutConfig as _LayoutConfig
-        def _compat_image_to_url(image, width, clamp, channels, output_format, image_id):
-            return _new_image_to_url(image, _LayoutConfig(width=width), clamp, channels, output_format, image_id)
+        def _compat_image_to_url(image, width=None, clamp=False, channels="RGB",
+                                 output_format="PNG", image_id="", *_a, **_kw):
+            try:
+                img = image
+                if not isinstance(img, Image.Image):
+                    try:
+                        import numpy as _np
+                        img = Image.fromarray(_np.asarray(img))
+                    except Exception:
+                        return ""
+                if img.mode not in ("RGB", "RGBA"):
+                    img = img.convert("RGB")
+                # drawable-canvas 會把畫布寬度當 width 傳進來；依此縮放底圖讓它正好鋪滿畫布
+                if isinstance(width, int) and width > 0 and img.width != width:
+                    _h = max(1, int(round(img.height * width / img.width)))
+                    img = img.resize((width, _h), Image.LANCZOS)
+                _buf = BytesIO()
+                img.save(_buf, format="PNG")
+                return "data:image/png;base64," + base64.b64encode(_buf.getvalue()).decode()
+            except Exception:
+                return ""
         _st_image_mod.image_to_url = _compat_image_to_url
 except Exception:
     pass
@@ -320,6 +338,19 @@ st.markdown("""
     /* ========================================================= */
     /* ✨ 手機優化：折價券改單欄全寬，按鈕排才不會被擠到跑版 */
     /* ========================================================= */
+    /* 🔧 隱形排版標記（keep-row/ratio-row/trio-btn/main-stack）所在的 markdown 容器整個收掉，
+       不可佔任何高度，否則會把該欄內容往下推、害同排另一欄顯得「太高」沒對齊 */
+    [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.keep-row),
+    [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.ratio-row),
+    [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.trio-btn),
+    [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.main-stack) {
+        display: none !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
     @media (max-width: 820px) {
         /* 折價券左右兩欄 → 改成上下單欄，每張券吃滿整個螢幕寬 */
         div[data-testid="stHorizontalBlock"]:has(.coupon-grid-anchor) {

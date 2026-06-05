@@ -1880,7 +1880,7 @@ if doc:
                             with c_txt:
                                 # 埋入隱形錨點供 CSS 辨識
                                 st.markdown('<span class="inline-row-txt" style="display:none;"></span>', unsafe_allow_html=True)
-                                text_input = st.text_input("✍️ 壓印文字（日期）", value=default_coupon_txt, key=f"txt_{slot_id}")
+                                text_input = st.text_input("✍️ 初始文字（也可直接在畫布上點兩下改）", value=default_coupon_txt, key=f"txt_{slot_id}")
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
@@ -1937,7 +1937,7 @@ if doc:
                                                 "left": float(def_x * cscale), "top": float(def_y * cscale),
                                                 "originX": "center", "originY": "center",
                                                 "fontSize": max(10, int(def_size * cscale)), "fill": text_color,
-                                                "angle": float(def_rot), "fontFamily": "sans-serif", "editable": False,
+                                                "angle": float(def_rot), "fontFamily": "sans-serif", "editable": True,
                                             },
                                         ],
                                     }
@@ -1958,9 +1958,9 @@ if doc:
                                         st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），改用拖曳編輯。")
                                     if canvas_ok:
                                         editor_shown = True
-                                        st.caption("🎨 拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉。"
-                                                   "✍️ 改文字：在上面文字框打好後，點一下畫面空白處(收鍵盤)就會套用到畫布；"
-                                                   "建議先打好字，再拖到位置。調好按下方「✅ 確認儲存」。")
+                                        st.caption("✍️ 直接在畫布上「點兩下文字」就能打字、即時看到（不用透過上面的文字框）。"
+                                                   "拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉。"
+                                                   "打完點一下畫面空白處收鍵盤，再按下方「✅ 確認儲存」。")
                                         if cres is not None and getattr(cres, "json_data", None):
                                             objs = cres.json_data.get("objects", [])
                                             # objects[0] 現在是底圖影像，要挑出文字物件(i-text)來讀位置
@@ -1970,6 +1970,10 @@ if doc:
                                                 ang = float(o.get("angle", 0) or 0)
                                                 lx, ty2 = o.get("left"), o.get("top")
                                                 ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
+                                                # ✍️ 以「畫布上實際打的文字」為準（在畫布點兩下直接編輯）
+                                                _ctext = o.get("text")
+                                                if isinstance(_ctext, str) and _ctext.strip():
+                                                    text_input = _ctext
                                                 if lx is not None and ty2 is not None:
                                                     x_pos = max(0, min(int(lx / cscale), base_img.width))
                                                     y_pos = max(0, min(int(ty2 / cscale), base_img.height))

@@ -26,31 +26,35 @@ except Exception:
 # 導致舊版 streamlit-drawable-canvas(0.9.3) 傳 background_image 時拿不到底圖 URL → 畫布一片空白。
 # 解法：把 image_to_url 補回原位置，且「直接把底圖轉成 PNG data URI」回傳，
 # 完全不依賴 streamlit 內部新簽名（之前包成 LayoutConfig 反而讓底圖產生失敗），瀏覽器一定能顯示。
-try:
-    import streamlit.elements.image as _st_image_mod
-    if not hasattr(_st_image_mod, "image_to_url"):
-        def _compat_image_to_url(image, width=None, clamp=False, channels="RGB",
-                                 output_format="PNG", image_id="", *_a, **_kw):
+def _compat_image_to_url(image, width=None, clamp=False, channels="RGB",
+                         output_format="PNG", image_id="", *_a, **_kw):
+    try:
+        img = image
+        if not isinstance(img, Image.Image):
             try:
-                img = image
-                if not isinstance(img, Image.Image):
-                    try:
-                        import numpy as _np
-                        img = Image.fromarray(_np.asarray(img))
-                    except Exception:
-                        return ""
-                if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGB")
-                # drawable-canvas 會把畫布寬度當 width 傳進來；依此縮放底圖讓它正好鋪滿畫布
-                if isinstance(width, int) and width > 0 and img.width != width:
-                    _h = max(1, int(round(img.height * width / img.width)))
-                    img = img.resize((width, _h), Image.LANCZOS)
-                _buf = BytesIO()
-                img.save(_buf, format="PNG")
-                return "data:image/png;base64," + base64.b64encode(_buf.getvalue()).decode()
+                import numpy as _np
+                img = Image.fromarray(_np.asarray(img))
             except Exception:
                 return ""
-        _st_image_mod.image_to_url = _compat_image_to_url
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        # drawable-canvas 會把畫布寬度當 width 傳進來；依此縮放底圖讓它正好鋪滿畫布
+        if isinstance(width, int) and width > 0 and img.width != width:
+            _h = max(1, int(round(img.height * width / img.width)))
+            img = img.resize((width, _h), Image.LANCZOS)
+        _buf = BytesIO()
+        img.save(_buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(_buf.getvalue()).decode()
+    except Exception:
+        return ""
+
+# ⚠️ 一定要「強制覆蓋」：新版 streamlit 其實還留著 image_to_url（只是換了簽名），
+# 若用 hasattr 判斷就不會生效，drawable-canvas 仍拿到壞掉的新版函式 → 畫布永遠空白。
+# 只覆蓋 streamlit.elements.image（drawable-canvas 專用的舊位置），不動 image_utils，
+# 以免影響到一般 st.image 的顯示。
+try:
+    import streamlit.elements.image as _st_image_mod
+    _st_image_mod.image_to_url = _compat_image_to_url
 except Exception:
     pass
 
@@ -404,21 +408,23 @@ st.markdown("""
             max-width: 100% !important;
         }
         /* ✨ 手機版：只有「標記為 keep-row」的列維持並排，其餘欄位各自一排（自然堆疊）；
-           排除外層 main-stack 容器（那一層要上下堆疊，不可被這條覆寫） */
-        div[data-testid="stHorizontalBlock"]:has(.keep-row):not(:has(.main-stack)) {
+           排除外層 main-stack／coupon-grid 容器（那兩層要上下堆疊，不可被這條覆寫） */
+        div[data-testid="stHorizontalBlock"]:has(.keep-row):not(:has(.main-stack)):not(:has(.coupon-grid-anchor)) {
             flex-wrap: nowrap !important;
             gap: 0.4rem !important;
+            align-items: center !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.keep-row):not(:has(.main-stack)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        div[data-testid="stHorizontalBlock"]:has(.keep-row):not(:has(.main-stack)):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
             min-width: 0 !important;
             flex: 1 1 0 !important;
         }
         /* ✨ 手機版：標記 ratio-row 的列維持並排，但保留各欄原本的寬度比例（如版型較寬、取幾筆較窄） */
-        div[data-testid="stHorizontalBlock"]:has(.ratio-row) {
+        div[data-testid="stHorizontalBlock"]:has(.ratio-row):not(:has(.main-stack)):not(:has(.coupon-grid-anchor)) {
             flex-wrap: nowrap !important;
             gap: 0.4rem !important;
+            align-items: center !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(.ratio-row) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        div[data-testid="stHorizontalBlock"]:has(.ratio-row):not(:has(.main-stack)):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
             min-width: 0 !important;
         }
         /* ✨ 手機版：分頁標籤縮小間距、字略小，三個分頁一頁就看完整 */
@@ -1015,22 +1021,21 @@ with st.sidebar:
     # 💡 使用小提醒：休眠與「保持清醒」說明（給未來的自己看）
     st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
     with st.expander("💡 開啟太慢/休眠畫面?"):
+        # 字體大小與「✅ 系統已安全連線」一致(15px)，文字上下左右置中於白色框中
         st.markdown("""
-**為什麼要等一下?**
-免費雲端超過約 7 天沒人開會自動休眠。再開時按「喚醒」等 30 秒～1 分鐘即可,屬正常現象、不是當機。
-
-**想每次秒開**
-到 cron-job.org 把「保持 BearJoy 客服清醒」開關切 ON,定時戳網址讓系統不睡;不常用再切 OFF。
-
-**正確開啟順序**
-1. 先用手機開本頁、按「喚醒」
-2. 再去 cron-job.org 切 ON
-3. pinger 只能維持清醒、叫不醒睡著的
-
-**小提醒**
-左邊方框是「選取框」不是開關。開關請點 EDIT → Enabled 切換後存檔。
-        """)
-        st.markdown("**建議間隔:每 6 小時或每天 1 次就夠,又省又不休眠。**")
+        <div style='font-size:15px; color:#4A4238; line-height:1.75; text-align:center;
+                    display:flex; flex-direction:column; justify-content:center; align-items:center;'>
+            <p style='margin:0 0 12px 0;'><b>為什麼要等一下?</b><br>
+            免費雲端超過約 7 天沒人開會自動休眠。再開時按「喚醒」等 30 秒～1 分鐘即可,屬正常現象、不是當機。</p>
+            <p style='margin:0 0 12px 0;'><b>想每次秒開</b><br>
+            到 cron-job.org 把「保持 BearJoy 客服清醒」開關切 ON,定時戳網址讓系統不睡;不常用再切 OFF。</p>
+            <p style='margin:0 0 12px 0;'><b>正確開啟順序</b><br>
+            1. 先用手機開本頁、按「喚醒」<br>2. 再去 cron-job.org 切 ON<br>3. pinger 只能維持清醒、叫不醒睡著的</p>
+            <p style='margin:0 0 12px 0;'><b>小提醒</b><br>
+            左邊方框是「選取框」不是開關。開關請點 EDIT → Enabled 切換後存檔。</p>
+            <p style='margin:0;'><b>建議間隔:每 6 小時或每天 1 次就夠,又省又不休眠。</b></p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ==========================================
 # 5. 主功能區
@@ -1054,8 +1059,8 @@ if doc:
                 files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
 
                 st.markdown("##### ② 回覆設定")
-                cck1, cck2 = st.columns(2)
-                cck1.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
+                cck1, cck2, _cksp = st.columns([1, 1.25, 1.4], vertical_alignment="center")
+                cck1.markdown('<span class="ratio-row" style="display:none"></span>', unsafe_allow_html=True)
                 is_vip_check = cck1.checkbox("🌟 回購語氣")
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
@@ -1949,6 +1954,7 @@ if doc:
                         # 編輯文字 / 完成編輯 ＋ 確認儲存：縮窄併排同一排（僅畫布模式才有編輯鈕）
                         if enable_text and base_img and use_canvas:
                             _bc1, _bc2 = st.columns(2)
+                            _bc1.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                             if st.session_state.get("edit_slot") == slot_id:
                                 if _bc1.button("↩ 完成編輯", key=f"endcv_{slot_id}", use_container_width=True):
                                     st.session_state.edit_slot = None

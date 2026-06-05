@@ -196,7 +196,7 @@ st.markdown("""
 
     .main-title-box {
         background: #EFEBE2;
-        padding: 20px 22px; border-radius: 10px; margin: 0 0 16px 0;
+        padding: 20px 22px; border-radius: 10px; margin: 12px 0 16px 0;
         border: 1px solid #DED8CC; box-sizing: border-box; width: 100%; overflow: visible;
         display: flex; align-items: center; justify-content: center; min-height: 70px;
     }
@@ -347,12 +347,29 @@ st.markdown("""
     [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.keep-row),
     [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.ratio-row),
     [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.trio-btn),
+    [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.cck-row),
     [data-testid="stElementContainer"]:has(> div[data-testid="stMarkdown"] span.main-stack) {
         display: none !important;
         height: 0 !important;
         min-height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
+    }
+
+    /* 回購語氣／保存截圖：兩顆貼齊左側、各取內容寬、隔約一個字距、垂直置中；保存截圖再往上微調對齊 */
+    div[data-testid="stHorizontalBlock"]:has(.cck-row):not(:has(.main-stack)) {
+        flex-wrap: nowrap !important;
+        gap: 0.85rem !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.cck-row):not(:has(.main-stack)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        min-width: 0 !important;
+        flex: 0 0 auto !important;
+        width: auto !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.cck-row):not(:has(.main-stack)) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(2) {
+        margin-top: -3px !important;
     }
 
     @media (max-width: 820px) {
@@ -1023,8 +1040,7 @@ with st.sidebar:
     with st.expander("💡 開啟太慢/休眠畫面?"):
         # 字體大小與「✅ 系統已安全連線」一致(15px)，文字上下左右置中於白色框中
         st.markdown("""
-        <div style='font-size:15px; color:#4A4238; line-height:1.75; text-align:center;
-                    display:flex; flex-direction:column; justify-content:center; align-items:center;'>
+        <div style='font-size:15px; color:#4A4238; line-height:1.75; text-align:left;'>
             <p style='margin:0 0 12px 0;'><b>為什麼要等一下?</b><br>
             免費雲端超過約 7 天沒人開會自動休眠。再開時按「喚醒」等 30 秒～1 分鐘即可,屬正常現象、不是當機。</p>
             <p style='margin:0 0 12px 0;'><b>想每次秒開</b><br>
@@ -1059,8 +1075,8 @@ if doc:
                 files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
 
                 st.markdown("##### ② 回覆設定")
-                cck1, cck2, _cksp = st.columns([1, 1.25, 1.4], vertical_alignment="center")
-                cck1.markdown('<span class="ratio-row" style="display:none"></span>', unsafe_allow_html=True)
+                cck1, cck2 = st.columns(2, vertical_alignment="center")
+                cck1.markdown('<span class="cck-row" style="display:none"></span>', unsafe_allow_html=True)
                 is_vip_check = cck1.checkbox("🌟 回購語氣")
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
@@ -1858,9 +1874,10 @@ if doc:
                                 if st.session_state.get("edit_slot") != slot_id:
                                     # 未編輯此版位：顯示靜態預覽（「編輯文字」鈕在下方與確認儲存併排）
                                     editor_shown = True
-                                    st.image(final_img_to_save, width=320)
+                                    st.image(final_img_to_save, width=300)
                                 else:
-                                    disp_w = 340
+                                    # 畫布寬度固定 px（drawable-canvas 不吃 %）；手機上 300 才不會超出容器被右邊截掉
+                                    disp_w = 300
                                     cscale = disp_w / base_img.width
                                     disp_h = max(1, int(base_img.height * cscale))
                                     bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)

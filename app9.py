@@ -332,6 +332,35 @@ st.markdown("""
             min-width: 100% !important;
             max-width: 100% !important;
         }
+        /* 三顆大地綠按鈕（重新整理／產生好評圖／打包原圖）→ 手機維持三顆同一排，文字不換行（縮小字級塞進一行） */
+        div[data-testid="stHorizontalBlock"]:has(.trio-btn) {
+            flex-wrap: nowrap !important;
+            gap: 0.3rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.trio-btn) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+            min-width: 0 !important;
+            flex: 1 1 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.trio-btn) div.stButton > button {
+            white-space: nowrap !important;
+            font-size: 12px !important;
+            padding-left: 2px !important;
+            padding-right: 2px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.trio-btn) div.stButton > button p {
+            white-space: nowrap !important;
+        }
+        /* 第一步驟上傳區 ＋ 第二步驟結果區 → 手機上下單欄，框吃滿整個螢幕寬（恢復原本寬度） */
+        div[data-testid="stHorizontalBlock"]:has(.main-stack) {
+            flex-direction: column !important;
+            gap: 0 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.main-stack) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+            flex: 1 1 100% !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+        }
         /* 大小/旋轉、左右/上下 這幾組拉桿在手機上也改成單欄，比較好拖 */
         div[data-testid="stHorizontalBlock"]:has(.slider-pair-anchor):not(:has(.coupon-grid-anchor)) {
             flex-direction: column !important;
@@ -343,14 +372,23 @@ st.markdown("""
             min-width: 100% !important;
             max-width: 100% !important;
         }
-        /* ✨ 手機版：一般欄位維持「並排不堆疊」（折價券版位、拉桿組除外）→ 各種按鈕/勾選同一排 */
-        div[data-testid="stHorizontalBlock"]:not(:has(.coupon-grid-anchor)):not(:has(.slider-pair-anchor)) {
+        /* ✨ 手機版：只有「標記為 keep-row」的列維持並排，其餘欄位各自一排（自然堆疊）；
+           排除外層 main-stack 容器（那一層要上下堆疊，不可被這條覆寫） */
+        div[data-testid="stHorizontalBlock"]:has(.keep-row):not(:has(.main-stack)) {
             flex-wrap: nowrap !important;
             gap: 0.4rem !important;
         }
-        div[data-testid="stHorizontalBlock"]:not(:has(.coupon-grid-anchor)):not(:has(.slider-pair-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        div[data-testid="stHorizontalBlock"]:has(.keep-row):not(:has(.main-stack)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
             min-width: 0 !important;
             flex: 1 1 0 !important;
+        }
+        /* ✨ 手機版：標記 ratio-row 的列維持並排，但保留各欄原本的寬度比例（如版型較寬、取幾筆較窄） */
+        div[data-testid="stHorizontalBlock"]:has(.ratio-row) {
+            flex-wrap: nowrap !important;
+            gap: 0.4rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.ratio-row) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+            min-width: 0 !important;
         }
         /* ✨ 手機版：分頁標籤縮小間距、字略小，三個分頁一頁就看完整 */
         [data-testid="stTabs"] button[role="tab"] { padding: 6px 6px !important; font-size: 12.5px !important; }
@@ -979,11 +1017,14 @@ if doc:
         with tab1:
             col_up, col_res = st.columns([1, 1.5], gap="large")
             with col_up:
+                # 手機版：上傳區與結果區改成上下單欄，框各自吃滿整個螢幕寬（電腦版維持左右並排）
+                st.markdown('<span class="main-stack" style="display:none"></span>', unsafe_allow_html=True)
                 st.markdown("##### ① 上傳好評截圖")
                 files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
 
                 st.markdown("##### ② 回覆設定")
                 cck1, cck2 = st.columns(2)
+                cck1.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                 is_vip_check = cck1.checkbox("🌟 回購語氣")
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
@@ -1201,6 +1242,7 @@ if doc:
                         if len(data) > 1:
                             section_block("💤", "沉睡客喚回", "找出好久沒回來的老客，生成專屬喚回訊息＋優惠碼，貼到蝦皮聊聊就能發。建議 30～90 天；想測試可先把天數設小一點看效果。")
                             c_days, c_code = st.columns(2)
+                            c_days.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                             days = c_days.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
                             wb_code = c_code.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
                             header = data[0]
@@ -1241,6 +1283,7 @@ if doc:
                                         df_sleep.to_excel(writer, index=False, sheet_name="沉睡客名單")
                                         _excel_align_left_top(writer.sheets["沉睡客名單"])
                                     cdl1, cdl2 = st.columns(2)
+                                    cdl1.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                                     with cdl1:
                                         st.download_button(
                                             "📥 下載 Excel",
@@ -1337,6 +1380,7 @@ if doc:
                         "顧客優點分析": _strip_md(st.session_state.insight_result),
                     }])
                     cin1, cin2 = st.columns(2)
+                    cin1.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                     with cin1:
                         try:
                             ibuf = BytesIO()
@@ -1372,15 +1416,17 @@ if doc:
                     "LINE 圖文（1040×1040）": (1040, 1040),
                     "自訂尺寸…": None,
                 }
-                c_tpl, c_size, c_n = st.columns(3)
+                # 版型 + 自動取幾筆：同一排（手機版維持並排；幾筆較窄）；圖片尺寸自己一排
+                c_tpl, c_n = st.columns([2, 1])
+                c_tpl.markdown('<span class="ratio-row" style="display:none"></span>', unsafe_allow_html=True)
                 template_label = c_tpl.selectbox("版型", [
-                    "版型A：真實截圖拼接（用你上傳的評價圖）",
+                    "版型A：真實截圖拼接",
                     "版型B：文字精選卡",
                     "版型C：大字引用感",
                 ], key="rev_tpl")
-                size_label = c_size.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
-                rev_n = c_n.number_input("或 自動取幾筆", min_value=1, max_value=12, value=3, step=1,
+                rev_n = c_n.number_input("或 取幾筆", min_value=1, max_value=12, value=3, step=1,
                                          key="rev_img_n", help="與『手動勾選評價』二擇一：沒手動勾選時，才會自動取最新這幾筆")
+                size_label = st.selectbox("圖片尺寸", list(SIZE_PRESETS.keys()), key="rev_size")
                 target_size = SIZE_PRESETS[size_label]
                 if target_size is None:
                     cw, ch = st.columns(2)
@@ -1411,10 +1457,9 @@ if doc:
                         _, a, sp = _mat_meta(r[0])
                         return _spec_no_color(sp) if sp else acc2spec.get(a, "")
                     # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：選項用全部規格清單，4 個款都會出現
-                    fa1, fa2 = st.columns(2)
-                    ma_specs = fa1.multiselect("選規格（可複選；留空＝全部）",
-                                               _specs_all, key="matimg_specs")
-                    ma_kw = fa2.text_input("或用關鍵字篩選", placeholder="例：三層", key="matimg_kw").strip()
+                    ma_specs = st.multiselect("選規格（可複選；留空＝全部）",
+                                              _specs_all, key="matimg_specs")
+                    ma_kw = st.text_input("或用關鍵字篩選", placeholder="例：三層", key="matimg_kw").strip()
                     # 🔍 AI 補抓規格：對「無規格」的舊截圖，用 AI 直接從圖片讀出規格並補進素材
                     _no_spec = [r for r in mat_pool if not _mat_spec(r)]
                     if _no_spec and st.button(f"🔍 AI 補抓規格（{len(_no_spec)} 張沒規格的截圖）", key="ai_fill_spec"):
@@ -1474,9 +1519,8 @@ if doc:
                                         st.checkbox(f"選 ［{_sp or '無規格'}］", key=f"matpick_{idx}")
                 else:
                     # 🔎 規格/關鍵字篩選（與「顧客最愛優點分析」一致）：先縮小要做圖的評價範圍
-                    fc1, fc2 = st.columns(2)
-                    img_specs = fc1.multiselect("選規格（可複選；留空＝全部）", _specs_all, key="revimg_specs")
-                    img_kw = fc2.text_input("或用關鍵字篩選", placeholder="例：三層", key="revimg_kw").strip()
+                    img_specs = st.multiselect("選規格（可複選；留空＝全部）", _specs_all, key="revimg_specs")
+                    img_kw = st.text_input("或用關鍵字篩選", placeholder="例：三層", key="revimg_kw").strip()
                     if img_specs:
                         pool_for_img = [r for r in review_pool if _review_spec(r[2]) in img_specs]
                     elif img_kw:
@@ -1500,12 +1544,13 @@ if doc:
                             st.caption("目前沒有可挑選的文字評價，先去「批次評價處理」處理幾筆吧。")
 
                 rcol, gcol, zcol = st.columns(3)
+                rcol.markdown('<span class="trio-btn" style="display:none"></span>', unsafe_allow_html=True)
                 if rcol.button("🔄 重新整理", use_container_width=True, key="refresh_pool_all"):
                     st.session_state.refresh_mat_pool = True
                     st.session_state.refresh_review_pool = True
                     st.rerun()
                 gen_clicked = gcol.button("✨ 產生好評圖", use_container_width=True)
-                zip_clicked = zcol.button("📦 原圖打包(ZIP)", use_container_width=True)
+                zip_clicked = zcol.button("📦 打包原圖", use_container_width=True)
                 if gen_clicked:
                     try:
                         card = None
@@ -1694,8 +1739,8 @@ if doc:
                 if base_img:
                     c_dl, c_hint = st.columns([0.8, 1.7], gap="small")
                     with c_dl:
-                        # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）
-                        st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span>', unsafe_allow_html=True)
+                        # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）；keep-row 讓手機版維持並排
+                        st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span><span class="keep-row" style="display:none;"></span>', unsafe_allow_html=True)
                         buf = BytesIO()
                         # ✨ 畫質升級：無損 PNG 下載
                         base_img.save(buf, format="PNG")

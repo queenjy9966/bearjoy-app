@@ -574,12 +574,12 @@ def get_or_create_ws(doc, title):
     except: return doc.add_worksheet(title=title, rows="100", cols="10")
 
 def img_to_base64_chunks(img):
+    # 折價券專用：用「無損 PNG」存，文字/邊緣完全不糊（JPEG 即使 q100 仍會在文字邊緣產生鬼影）
     if img.mode in ("RGBA", "P"): img = img.convert("RGB")
-    # ✨ 畫質升級：解析度拉高至 2400，確保文字銳利度
-    img.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
+    # 解析度上限拉高到 2600，確保清晰（thumbnail 只會縮小、不會放大，原圖較小則維持原樣）
+    img.thumbnail((2600, 2600), Image.Resampling.LANCZOS)
     buffered = BytesIO()
-    # ✨ 畫質升級：使用最高品質 100 儲存
-    img.save(buffered, format="JPEG", quality=100, subsampling=0)
+    img.save(buffered, format="PNG", optimize=True)  # 無損；optimize 在不損畫質下縮小體積
     b64_str = base64.b64encode(buffered.getvalue()).decode()
     return [b64_str[i:i+45000] for i in range(0, len(b64_str), 45000)]
 
@@ -1348,11 +1348,19 @@ if doc:
                                             try:
                                                 with st.spinner("寫入雲端中…"):
                                                     link = write_df_to_sheet(doc, "沉睡客名單", df_sleep)
-                                                st.success("已寫入雲端 Google Sheet「沉睡客名單」分頁 ✅")
-                                                if link:
-                                                    st.markdown(f"[👉 點此開啟雲端名單]({link})")
+                                                st.session_state.sleep_sync_msg = ("ok", "已寫入雲端 Google Sheet「沉睡客名單」分頁 ✅", link)
                                             except Exception as e:
-                                                st.error(f"雲端同步失敗：{e}")
+                                                st.session_state.sleep_sync_msg = ("err", f"雲端同步失敗：{e}", None)
+                                    # 同步結果訊息：滿版顯示在兩顆按鍵下方，不擠動上面的「下載 Excel」鍵
+                                    _slp_msg = st.session_state.get("sleep_sync_msg")
+                                    if _slp_msg:
+                                        _mk, _mtext, _mlink = _slp_msg
+                                        if _mk == "ok":
+                                            st.success(_mtext)
+                                            if _mlink:
+                                                st.markdown(f"[👉 點此開啟雲端名單]({_mlink})")
+                                        else:
+                                            st.error(_mtext)
                                 except Exception as e:
                                     st.caption(f"⚠️ Excel 名單產生失敗（不影響下方訊息）：{e}")
 

@@ -144,6 +144,8 @@ st.markdown("""
     /* 分頁籤縮小、清爽，選中態更明顯 */
     [data-testid="stTabs"] button[role="tab"] { font-size: 14px !important; padding: 7px 14px !important; font-weight: 600 !important; }
     [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color: #4A4238 !important; font-weight: 700 !important; }
+    /* 三個分頁之間多空約兩個字的距離 */
+    [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 1.9rem !important; }
 
     [data-testid="stSidebar"] { background-color: #F0EDE5 !important; }
     /* 側欄標題（✦ BearJoy 導航）不要左側線條 */
@@ -446,7 +448,8 @@ st.markdown("""
         }
         /* ✨ 手機版：分頁標籤縮小間距、字略小，三個分頁一頁就看完整 */
         [data-testid="stTabs"] button[role="tab"] { padding: 6px 6px !important; font-size: 12.5px !important; }
-        [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 4px !important; }
+        /* 手機版分頁間距：多空約兩個字（太擠不好點，且使用者要求拉開） */
+        [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 1.4rem !important; }
     }
 
     /* ========================================================= */
@@ -1931,12 +1934,16 @@ if doc:
                                         ],
                                     }
                                     canvas_ok = False
+                                    # 🔑 key 隨「文字／顏色／位置／大小／旋轉」變化：內容一變就整個重建畫布(乾淨單一物件)，
+                                    # 避免 drawable-canvas 用固定 key 時把新文字疊加在舊文字上 → 出現兩個 6/30。
+                                    _csig = f"{text_input}|{text_color}|{x_pos}|{y_pos}|{font_size}|{rotation_angle}"
+                                    _ckey = f"cv_{slot_id}_{abs(hash(_csig))}"
                                     try:
                                         cres = st_canvas(initial_drawing=init,
                                                          drawing_mode="transform", update_streamlit=False,
                                                          height=disp_h, width=disp_w, display_toolbar=False,
                                                          background_color="#FFFFFF",
-                                                         key=f"cv_{slot_id}")
+                                                         key=_ckey)
                                         canvas_ok = True
                                     except Exception as _ce:
                                         cres = None

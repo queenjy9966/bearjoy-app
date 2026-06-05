@@ -364,17 +364,15 @@ st.markdown("""
     .stButton > button, .stDownloadButton > button {
         background-color: #798571 !important; color: #FFFFFF !important;
         border: none !important; border-radius: 6px !important;
-        height: 38px !important; min-height: 38px !important;
-        /* ✨ 按鈕變小變窄：寬度依文字自適應(不再長條)，最小 90px、最寬撐滿容器；字多的自然較長 */
-        width: auto !important; min-width: 90px !important; max-width: 100% !important;
-        font-size: 13.5px !important; font-weight: 600 !important;
+        height: 42px !important; min-height: 42px !important;
+        /* 按鈕填滿所在欄位（在欄位排版裡才會整齊對齊）；不另設固定寬避免跑版 */
+        width: 100% !important; max-width: 100% !important;
+        font-size: 14px !important; font-weight: 600 !important;
         padding: 0 14px !important;
         display: inline-flex !important; align-items: center !important; justify-content: center !important;
-        text-align: center !important; line-height: 1.2 !important; white-space: nowrap !important;
+        text-align: center !important; line-height: 1.2 !important;
         box-shadow: none !important;
     }
-    /* 按鈕在欄位中置中（內容自適應寬度後不靠左） */
-    .stButton, .stDownloadButton { display: flex !important; justify-content: center !important; }
     .stButton > button:hover, .stDownloadButton > button:hover {
         background-color: #687560 !important; color: #FFFFFF !important;
     }
@@ -1757,7 +1755,7 @@ if doc:
                             # 操作方式：🎨 畫布直接編輯（Canva 式）／三模式拖曳／拉桿
                             x_pos = max(0, min(int(st.session_state.get(f"px_{slot_id}", def_x)), base_img.width))
                             y_pos = max(0, min(int(st.session_state.get(f"py_{slot_id}", def_y)), base_img.height))
-                            use_canvas = False  # 畫布底圖在使用者裝置渲染不出來(白底)，改用會顯示圖片的拖曳編輯器
+                            use_canvas = HAS_CANVAS  # Canva 式畫布（手機可用就用這個；按「編輯文字」才開）
                             if use_canvas or HAS_IMG_COORDS:
                                 font_size = max(10, min(int(st.session_state.get(f"csz_{slot_id}", def_size)), 200))
                                 rotation_angle = max(-180, min(int(st.session_state.get(f"crot_{slot_id}", def_rot)), 180))

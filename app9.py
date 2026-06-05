@@ -1083,7 +1083,7 @@ if doc:
                 is_vip_check = cck1.checkbox("🌟 回購語氣")
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
-                save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=False,
+                save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=True,
                                             help="把上傳的評價原圖存到指定 Drive 資料夾，檔名＝「日期 評價圖-規格」。"
                                                  "註：個人 Gmail＋服務帳號因 Google 限制無法直接存（服務帳號無儲存空間），"
                                                  "需改用 Apps Script 中轉才會成功；目前評價原圖已備份在「評價截圖素材」分頁。")
@@ -1290,7 +1290,13 @@ if doc:
                         if len(data) > 1:
                             st.caption(f"目前共 {len(data) - 1} 位 VIP 顧客")
                             # ✨ 固定高度＝表頭＋5 列：最多呈現 5 筆，其餘在框內用右側滾輪捲動，不會把整頁撐長
-                            st.dataframe(pd.DataFrame(data[1:], columns=data[0]), use_container_width=True, height=213)
+                            _vipdf = pd.DataFrame(data[1:], columns=data[0])
+                            # 依「最後互動」日期由新到舊排序（最新的排最上面）
+                            if "最後互動" in _vipdf.columns:
+                                _vipdf = (_vipdf.assign(_k=pd.to_datetime(_vipdf["最後互動"], errors="coerce"))
+                                                .sort_values("_k", ascending=False, na_position="last")
+                                                .drop(columns="_k").reset_index(drop=True))
+                            st.dataframe(_vipdf, use_container_width=True, height=213)
                         else: st.info("目前 VIP 名單尚無資料，趕快去解析第一筆評價吧！")
 
                         # 💤 功能3：沉睡客喚回——找出好久沒回來的老客，一鍵生成喚回訊息
@@ -1926,17 +1932,19 @@ if doc:
                                         "objects": [
                                             {
                                                 "type": "i-text", "version": "4.4.0", "text": text_input or "日期",
-                                                "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                                # ⚠️ 用「進入編輯當下的固定位置(def_*)」當初始值，不要用即時 x_pos：
+                                                # 這樣拖曳時 init 內容不變 → 畫布不會重載 → 不閃、不複製，拖到哪就停在哪。
+                                                "left": float(def_x * cscale), "top": float(def_y * cscale),
                                                 "originX": "center", "originY": "center",
-                                                "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
-                                                "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
+                                                "fontSize": max(10, int(def_size * cscale)), "fill": text_color,
+                                                "angle": float(def_rot), "fontFamily": "sans-serif", "editable": False,
                                             },
                                         ],
                                     }
                                     canvas_ok = False
-                                    # 🔑 key 隨「文字／顏色／位置／大小／旋轉」變化：內容一變就整個重建畫布(乾淨單一物件)，
-                                    # 避免 drawable-canvas 用固定 key 時把新文字疊加在舊文字上 → 出現兩個 6/30。
-                                    _csig = f"{text_input}|{text_color}|{x_pos}|{y_pos}|{font_size}|{rotation_angle}"
+                                    # 🔑 key 只隨「文字／顏色」變化：改字才整個重建(乾淨單一文字，不疊加)；
+                                    # 拖曳/縮放/旋轉不改 key → 畫布不重建 → 位置保留、放開即讀回並存檔。
+                                    _csig = f"{text_input}|{text_color}"
                                     _ckey = f"cv_{slot_id}_{abs(hash(_csig))}"
                                     try:
                                         cres = st_canvas(initial_drawing=init,
@@ -1950,7 +1958,9 @@ if doc:
                                         st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），改用拖曳編輯。")
                                     if canvas_ok:
                                         editor_shown = True
-                                        st.caption("🎨 拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉（放開後不閃）。調好按下方「✅ 確認儲存」。")
+                                        st.caption("🎨 拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉。"
+                                                   "✍️ 改文字：在上面文字框打好後，點一下畫面空白處(收鍵盤)就會套用到畫布；"
+                                                   "建議先打好字，再拖到位置。調好按下方「✅ 確認儲存」。")
                                         if cres is not None and getattr(cres, "json_data", None):
                                             objs = cres.json_data.get("objects", [])
                                             # objects[0] 現在是底圖影像，要挑出文字物件(i-text)來讀位置

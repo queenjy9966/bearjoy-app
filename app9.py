@@ -1864,18 +1864,34 @@ if doc:
                                     cscale = disp_w / base_img.width
                                     disp_h = max(1, int(base_img.height * cscale))
                                     bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
-                                    init = {"version": "4.4.0", "objects": [{
-                                        "type": "i-text", "text": text_input or "日期",
-                                        "left": float(x_pos * cscale), "top": float(y_pos * cscale),
-                                        "originX": "center", "originY": "center",
-                                        "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
-                                        "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
-                                    }]}
+                                    # 🔑 關鍵解法：不用 background_image（那條路在裝置上壞掉），
+                                    # 改把底圖轉成 data URI，當作「不可選取的影像物件」直接畫進畫布最底層，
+                                    # 由 fabric.js 自己載入顯示 → 一定看得到圖。
+                                    _bgbuf = BytesIO(); bg.save(_bgbuf, format="PNG")
+                                    bg_uri = "data:image/png;base64," + base64.b64encode(_bgbuf.getvalue()).decode()
+                                    init = {"version": "4.4.0", "objects": [
+                                        {
+                                            "type": "image", "version": "4.4.0", "src": bg_uri,
+                                            "left": 0, "top": 0, "originX": "left", "originY": "top",
+                                            "width": disp_w, "height": disp_h, "scaleX": 1, "scaleY": 1,
+                                            "angle": 0, "opacity": 1, "crossOrigin": None,
+                                            "selectable": False, "evented": False, "hoverCursor": "default",
+                                            "filters": [],
+                                        },
+                                        {
+                                            "type": "i-text", "version": "4.4.0", "text": text_input or "日期",
+                                            "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                            "originX": "center", "originY": "center",
+                                            "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
+                                            "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
+                                        },
+                                    ]}
                                     canvas_ok = False
                                     try:
-                                        cres = st_canvas(background_image=bg, initial_drawing=init,
+                                        cres = st_canvas(initial_drawing=init,
                                                          drawing_mode="transform", update_streamlit=False,
                                                          height=disp_h, width=disp_w, display_toolbar=False,
+                                                         background_color="#FFFFFF",
                                                          key=f"cv_{slot_id}")
                                         canvas_ok = True
                                     except Exception as _ce:
@@ -1886,8 +1902,9 @@ if doc:
                                         st.caption("🎨 拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉（放開後不閃）。調好按下方「✅ 確認儲存」。")
                                         if cres is not None and getattr(cres, "json_data", None):
                                             objs = cres.json_data.get("objects", [])
-                                            if objs:
-                                                o = objs[0]
+                                            # objects[0] 現在是底圖影像，要挑出文字物件(i-text)來讀位置
+                                            o = next((ob for ob in objs if ob.get("type") == "i-text"), None)
+                                            if o:
                                                 sx = float(o.get("scaleX", 1) or 1)
                                                 ang = float(o.get("angle", 0) or 0)
                                                 lx, ty2 = o.get("left"), o.get("top")

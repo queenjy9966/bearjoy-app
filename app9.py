@@ -1372,7 +1372,16 @@ if doc:
                 try:
                     _hist = get_or_create_ws(doc, "回覆紀錄").get_all_values()
                     _rows = [r for r in _hist[1:] if len(r) > 2 and r[2].strip() and r[2].strip() != "解析失敗"]
-                    st.session_state.review_pool = list(reversed(_rows))
+                    _rows = list(reversed(_rows))  # 最新在前
+                    # 🔁 去重：同一帳號＋同一評價內容只保留一筆(最新)，避免重複處理時同一則好評出現兩次
+                    _seen_rv = set(); _dedup_rv = []
+                    for _r in _rows:
+                        _acc = _r[1].strip() if len(_r) > 1 else ""
+                        _key = (_acc, _r[2].strip())
+                        if _key in _seen_rv:
+                            continue
+                        _seen_rv.add(_key); _dedup_rv.append(_r)
+                    st.session_state.review_pool = _dedup_rv
                 except Exception:
                     st.session_state.review_pool = []
                 st.session_state.refresh_review_pool = False
@@ -1417,6 +1426,7 @@ if doc:
                                 if result:
                                     st.session_state.insight_result = result
                                     st.session_state.insight_spec_used = used_label
+                                    st.session_state.pop("insight_sync_msg", None)  # 新分析→清掉上次的同步訊息
                                 else:
                                     st.error("分析失敗，請稍後再試（可能是 AI 額度或網路問題）。")
                         except Exception as e:
@@ -1452,11 +1462,19 @@ if doc:
                             try:
                                 with st.spinner("寫入雲端中…"):
                                     link = write_df_to_sheet(doc, "顧客優點分析", df_insight)
-                                st.success("已寫入雲端 Google Sheet「顧客優點分析」分頁 ✅")
-                                if link:
-                                    st.markdown(f"[👉 點此開啟雲端分析]({link})")
+                                st.session_state.insight_sync_msg = ("ok", "已寫入雲端 Google Sheet「顧客優點分析」分頁 ✅", link)
                             except Exception as e:
-                                st.error(f"雲端同步失敗：{e}")
+                                st.session_state.insight_sync_msg = ("err", f"雲端同步失敗：{e}", None)
+                    # 同步結果訊息：滿版顯示在兩顆按鍵下方（從下載 Excel 鍵到同步雲端鍵下方都可呈現），不擠動上面的按鍵
+                    _ins_msg = st.session_state.get("insight_sync_msg")
+                    if _ins_msg:
+                        _mk, _mtext, _mlink = _ins_msg
+                        if _mk == "ok":
+                            st.success(_mtext)
+                            if _mlink:
+                                st.markdown(f"[👉 點此開啟雲端分析]({_mlink})")
+                        else:
+                            st.error(_mtext)
 
             # 🖼️ 大區塊二：一鍵生成顧客好評圖
             with st.container(border=True):
@@ -1881,28 +1899,29 @@ if doc:
                                     cscale = disp_w / base_img.width
                                     disp_h = max(1, int(base_img.height * cscale))
                                     bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
-                                    # 🔑 關鍵解法：不用 background_image（那條路在裝置上壞掉），
-                                    # 改把底圖轉成 data URI，當作「不可選取的影像物件」直接畫進畫布最底層，
-                                    # 由 fabric.js 自己載入顯示 → 一定看得到圖。
+                                    # 🔑 關鍵解法：把底圖放進 fabric 的「背景圖」欄位(backgroundImage)，
+                                    # 背景圖天生就不能被選取/拖曳 → 圖永遠當底，唯一可編輯的物件只有壓印文字。
+                                    # （之前用 image 物件當底，圖還是會被當成編輯對象，所以改成背景圖。）
                                     _bgbuf = BytesIO(); bg.save(_bgbuf, format="PNG")
                                     bg_uri = "data:image/png;base64," + base64.b64encode(_bgbuf.getvalue()).decode()
-                                    init = {"version": "4.4.0", "objects": [
-                                        {
+                                    init = {
+                                        "version": "4.4.0",
+                                        "backgroundImage": {
                                             "type": "image", "version": "4.4.0", "src": bg_uri,
                                             "left": 0, "top": 0, "originX": "left", "originY": "top",
                                             "width": disp_w, "height": disp_h, "scaleX": 1, "scaleY": 1,
-                                            "angle": 0, "opacity": 1, "crossOrigin": None,
-                                            "selectable": False, "evented": False, "hoverCursor": "default",
-                                            "filters": [],
+                                            "angle": 0, "opacity": 1, "crossOrigin": None, "filters": [],
                                         },
-                                        {
-                                            "type": "i-text", "version": "4.4.0", "text": text_input or "日期",
-                                            "left": float(x_pos * cscale), "top": float(y_pos * cscale),
-                                            "originX": "center", "originY": "center",
-                                            "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
-                                            "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
-                                        },
-                                    ]}
+                                        "objects": [
+                                            {
+                                                "type": "i-text", "version": "4.4.0", "text": text_input or "日期",
+                                                "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                                "originX": "center", "originY": "center",
+                                                "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
+                                                "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": False,
+                                            },
+                                        ],
+                                    }
                                     canvas_ok = False
                                     try:
                                         cres = st_canvas(initial_drawing=init,

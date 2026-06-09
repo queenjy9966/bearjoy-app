@@ -1905,19 +1905,14 @@ if doc:
                             def_color = sv.get("color", "#FFFFFF")
                             def_x = max(0, min(sv.get("x", base_img.width // 2), base_img.width))
                             def_y = max(0, min(sv.get("y", int(base_img.height * 0.7)), base_img.height))
-                            st.caption("換日期只要改下方文字再按儲存，位置/大小/顏色會自動記住。")
-                            if clean_row is None:
-                                st.warning("⚠️ 此版位沒有『乾淨底圖』。如果這張原圖本身已經印著日期/文字，"
-                                           "編輯時會看到兩組文字（底圖烤死的一組＋可拖曳的一組），那組烤死的拖不動也刪不掉。"
-                                           "解法：先用上方「更換版位圖片」重新上傳一張『沒有任何文字』的原始圖並存原圖，"
-                                           "之後再編輯加字就不會重疊了。")
+                            st.caption("在下方「文字」打上日期，文字會出現在畫布，再用拖曳調整位置；不打字就不會壓任何文字。")
 
                             # ✨ 錨點魔法 2：文字方框與顏色並排
                             c_txt, c_col = st.columns(2)
                             with c_txt:
                                 # 埋入隱形錨點供 CSS 辨識
                                 st.markdown('<span class="inline-row-txt" style="display:none;"></span>', unsafe_allow_html=True)
-                                text_input = st.text_input("✍️ 初始文字（也可直接在畫布上點兩下改）", value=default_coupon_txt, key=f"txt_{slot_id}")
+                                text_input = st.text_input("✍️ 文字（預設空白；要壓日期就自己打，例如 6/30）", value="", placeholder=default_coupon_txt, key=f"txt_{slot_id}")
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
@@ -1963,12 +1958,13 @@ if doc:
                                     if (text_input or "").strip():
                                         _txt_objs = [{
                                             "type": "i-text", "version": "4.4.0", "text": text_input,
-                                            # ⚠️ 用 session 內「目前」位置/大小/角度當初始值（不是固定的 def_*）：
-                                            # 拖過之後若畫布因改字重建，文字會回到「上次拖到的位置」而非跳回預設位置。
-                                            "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                            # ⚠️ 一定要用「固定的 def_* 位置」當初始值，不能用即時 x_pos/y_pos：
+                                            # 拖曳時 init 內容若跟著變，畫布會重載 → 把文字複製一份產生鬼影/疊字。
+                                            # 固定 init → 拖曳期間 init 不變 → 畫布不重載 → 只有一個文字、拖到哪停哪。
+                                            "left": float(def_x * cscale), "top": float(def_y * cscale),
                                             "originX": "center", "originY": "center",
-                                            "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
-                                            "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": True,
+                                            "fontSize": max(10, int(def_size * cscale)), "fill": text_color,
+                                            "angle": float(def_rot), "fontFamily": "sans-serif", "editable": True,
                                         }]
                                     init = {
                                         "version": "4.4.0",
@@ -2000,9 +1996,10 @@ if doc:
                                         st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），改用拖曳編輯。")
                                     if canvas_ok:
                                         editor_shown = True
-                                        st.caption("✍️ 點兩下文字＝打字、拖曳＝移動、拉四角＝縮放、轉上方圓點＝旋轉。"
-                                                   "🗑️ 想刪文字：先點一下文字選取它，再按畫布工具列的垃圾桶（或把上面的『初始文字』清空）。"
-                                                   "喬好後按下方「✅ 確認儲存」即可（位置會即時記住，不會跳回原位）。")
+                                        st.caption("✍️ 在上面「文字」框打上日期，文字就會出現在畫布。"
+                                                   "拖曳＝移動、拉四角＝縮放、轉上方圓點＝旋轉、點兩下＝改字。"
+                                                   "🗑️ 想刪文字：把上面「文字」框清空（或選取文字後按畫布工具列垃圾桶）。"
+                                                   "喬好後按「✅ 確認儲存」（位置會即時記住，不會跳回原位）。")
                                         if cres is not None and getattr(cres, "json_data", None):
                                             objs = cres.json_data.get("objects", [])
                                             # objects[0] 現在是底圖影像，要挑出文字物件(i-text)來讀位置

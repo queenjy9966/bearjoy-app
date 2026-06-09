@@ -1803,24 +1803,38 @@ if doc:
                         trigger_order_save(sheet_url, st.session_state.active_slots)
                         st.rerun()
 
+                # 🧼 關鍵修正：分開「乾淨底圖」與「成品圖」，壓字一律壓在乾淨底圖上，不會疊字。
+                #    base_img = 乾淨底圖(couponbase_)；display_img = 已存成品(coupon_，含字，給預覽/下載)
                 base_img = None
+                display_img = None
                 existing_row = next((r for r in cfg_data if len(r) > 0 and r[0] == f'coupon_{slot_id}'), None)
-                if existing_row and len(existing_row) > 1:
-                    try:
-                        # ✨ 抗閃爍/加速：解碼過的底圖快取在 session，之後每次互動(換日期/拖曳/調大小)
-                        #    都直接重用，不再重新解碼大圖，畫面更新快很多、不再閃半天。
-                        sig = (len(existing_row), existing_row[1][:32])
-                        cache = st.session_state.setdefault("_decoded_imgs", {})
-                        ent = cache.get(slot_id)
-                        if ent and ent[0] == sig:
-                            base_img = ent[1]
-                        else:
-                            base_img = base64_chunks_to_img([c for c in existing_row[1:] if c])
-                            cache[slot_id] = (sig, base_img)
-                        st.image(base_img, width=300)
-                    except Exception: st.warning("圖片載入異常，請重新上傳")
-                else:
-                    st.info("此版位目前為空，請先上傳底圖。")
+                clean_row = next((r for r in cfg_data if len(r) > 0 and r[0] == f'couponbase_{slot_id}'), None)
+                cache = st.session_state.setdefault("_decoded_imgs", {})
+
+                def _decode_row(row, ck):
+                    if not (row and len(row) > 1):
+                        return None
+                    sig = (len(row), row[1][:32])
+                    ent = cache.get(ck)
+                    if ent and ent[0] == sig:
+                        return ent[1]
+                    img = base64_chunks_to_img([c for c in row[1:] if c])
+                    cache[ck] = (sig, img)
+                    return img
+
+                try:
+                    display_img = _decode_row(existing_row, f"disp_{slot_id}")
+                    base_img = _decode_row(clean_row, f"base_{slot_id}")
+                    if base_img is None:
+                        base_img = display_img      # 舊資料沒有乾淨底圖 → 暫用成品(可能已含字)
+                    if display_img is None:
+                        display_img = base_img
+                    if display_img is not None:
+                        st.image(display_img, width=300)
+                    else:
+                        st.info("此版位目前為空，請先上傳底圖。")
+                except Exception:
+                    st.warning("圖片載入異常，請重新上傳")
 
                 # ✨ 下載鈕（窄）＋長按提示：同一排；提示文字與下載鍵框上下置中、不重疊
                 if base_img:
@@ -1829,11 +1843,27 @@ if doc:
                         # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）；keep-row 讓手機版維持並排
                         st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span><span class="keep-row" style="display:none;"></span>', unsafe_allow_html=True)
                         buf = BytesIO()
-                        # ✨ 畫質升級：無損 PNG 下載
-                        base_img.save(buf, format="PNG")
+                        # ✨ 畫質升級：無損 PNG 下載（下載已存成品＝含字那張）
+                        (display_img or base_img).save(buf, format="PNG")
                         st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
                     with c_hint:
                         st.markdown("<p style='font-size:13px; color:#8A8275; margin:0; height:38px; display:flex; align-items:center; white-space:nowrap;'>💡 長按圖片可儲存</p>", unsafe_allow_html=True)
+
+                # 🗑️ 清除壓印文字：把成品還原成乾淨底圖（去掉日期/文字、清掉位置記憶）
+                if base_img and clean_row:
+                    if st.button("🗑️ 清除文字（還原乾淨底圖）", use_container_width=True, key=f"clr_txt_{slot_id}"):
+                        with st.spinner("清除中..."):
+                            chunks = img_to_base64_chunks(base_img.convert("RGB"))
+                            # 先一次收集要刪的列、由大到小刪（避免刪一列後索引位移刪錯）
+                            _keys = (f"coupon_{slot_id}", f"coupset_{slot_id}")
+                            for ri in sorted([i + 1 for i, r in enumerate(cfg_data)
+                                              if r and r[0] in _keys], reverse=True):
+                                ws_cfg.delete_rows(ri)
+                            ws_cfg.append_row([f"coupon_{slot_id}"] + chunks)  # 成品還原成乾淨底圖
+                            st.session_state.pop("_decoded_imgs", None)
+                            st.session_state.refresh_cfg = True
+                            st.success("已清除文字，還原成乾淨底圖！")
+                            st.rerun()
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 
@@ -1843,11 +1873,13 @@ if doc:
                     if st.button("✅ 直接儲存原圖（不加字）", type="primary", use_container_width=True, key=f"save_raw_{slot_id}"):
                         with st.spinner("儲存中..."):
                             chunks = img_to_base64_chunks(base_img.convert("RGB"))
-                            rows_to_del = [i + 1 for i, r in enumerate(cfg_data) if r and r[0] == f"coupon_{slot_id}"]
-                            if rows_to_del:
-                                for ri in sorted(rows_to_del, reverse=True):
-                                    ws_cfg.delete_rows(ri)
+                            # 新底圖：成品(coupon_)與乾淨底圖(couponbase_)都存這張、並清掉舊位置記憶(coupset_)
+                            _keys = (f"coupon_{slot_id}", f"couponbase_{slot_id}", f"coupset_{slot_id}")
+                            for ri in sorted([i + 1 for i, r in enumerate(cfg_data) if r and r[0] in _keys], reverse=True):
+                                ws_cfg.delete_rows(ri)
                             ws_cfg.append_row([f"coupon_{slot_id}"] + chunks)
+                            ws_cfg.append_row([f"couponbase_{slot_id}"] + chunks)
+                            st.session_state.pop("_decoded_imgs", None)
                             st.session_state.refresh_cfg = True
                             st.success("已儲存！")
                             st.rerun()
@@ -2058,10 +2090,19 @@ if doc:
                                     for row_index in sorted(rows_to_del, reverse=True):
                                         ws_cfg.delete_rows(row_index)
                                 ws_cfg.append_row(row_data)
+                                # 🧼 安全網：若還沒有乾淨底圖、且目前底圖是乾淨的(剛上傳)，補存一份乾淨底圖
+                                #    這樣即使「上傳後直接加字、沒先按存原圖」，下次編輯也不會疊字。
+                                if clean_row is None and new_file is not None:
+                                    try:
+                                        base_chunks = img_to_base64_chunks(base_img.convert("RGB"))
+                                        ws_cfg.append_row([f"couponbase_{slot_id}"] + base_chunks)
+                                    except Exception:
+                                        pass
                                 # 📅 功能3：一併記住壓印位置（下次換日期免重喬）
                                 if enable_text:
                                     _save_kv(ws_cfg, f"coupset_{slot_id}", f"{x_pos}|{y_pos}|{font_size}|{rotation_angle}|{text_color}")
 
+                                st.session_state.pop("_decoded_imgs", None)
                                 st.session_state.refresh_cfg = True
                                 st.success("更新成功！")
                                 st.rerun()

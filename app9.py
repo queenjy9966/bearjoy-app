@@ -963,18 +963,25 @@ def _stamp_coupon(base_img, text, color, size, cx, cy, rot):
     preview = base_img.copy().convert("RGBA")
     font = get_chinese_font(size)
     dd = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
+    ox = oy = 0
     try:
         bb = dd.multiline_textbbox((0, 0), text, font=font, align="center")
+        ox, oy = bb[0], bb[1]            # 墨水相對「畫字錨點(上緣)」的左/上偏移
         tw, th = bb[2] - bb[0], bb[3] - bb[1]
     except Exception:
         tw, th = 200, 100
     lw, lh = max(2, int(tw * 2.5)), max(2, int(th * 2.5))
     layer = Image.new('RGBA', (lw, lh), (255, 255, 255, 0))
     ld = ImageDraw.Draw(layer)
+    # 🔑 對位修正：multiline_text 的錨點是「上緣/ascender」而非實際墨水頂端，
+    # 只用 th/2 置中會讓字往下偏 oy（中文/數字尤其明顯）。扣掉 (ox,oy) 後，
+    # 「墨水中心」才會真正落在圖層中心 → 壓出來對準畫布上拖到的位置，不再偏下。
+    px = lw / 2 - tw / 2 - ox
+    py = lh / 2 - th / 2 - oy
     try:
-        ld.multiline_text((lw / 2 - tw / 2, lh / 2 - th / 2), text, fill=color, font=font, align="center")
+        ld.multiline_text((px, py), text, fill=color, font=font, align="center")
     except Exception:
-        ld.text((lw / 2 - tw / 2, lh / 2 - th / 2), text, fill=color, font=font)
+        ld.text((px, py), text, fill=color, font=font)
     rl = layer.rotate(-rot, expand=True, resample=Image.BICUBIC)
     preview.alpha_composite(rl, (int(cx - rl.width / 2), int(cy - rl.height / 2)))
     return preview.convert("RGB"), tw, th

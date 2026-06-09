@@ -1906,6 +1906,11 @@ if doc:
                             def_x = max(0, min(sv.get("x", base_img.width // 2), base_img.width))
                             def_y = max(0, min(sv.get("y", int(base_img.height * 0.7)), base_img.height))
                             st.caption("換日期只要改下方文字再按儲存，位置/大小/顏色會自動記住。")
+                            if clean_row is None:
+                                st.warning("⚠️ 此版位沒有『乾淨底圖』。如果這張原圖本身已經印著日期/文字，"
+                                           "編輯時會看到兩組文字（底圖烤死的一組＋可拖曳的一組），那組烤死的拖不動也刪不掉。"
+                                           "解法：先用上方「更換版位圖片」重新上傳一張『沒有任何文字』的原始圖並存原圖，"
+                                           "之後再編輯加字就不會重疊了。")
 
                             # ✨ 錨點魔法 2：文字方框與顏色並排
                             c_txt, c_col = st.columns(2)
@@ -1953,6 +1958,18 @@ if doc:
                                     # （之前用 image 物件當底，圖還是會被當成編輯對象，所以改成背景圖。）
                                     _bgbuf = BytesIO(); bg.save(_bgbuf, format="PNG")
                                     bg_uri = "data:image/png;base64," + base64.b64encode(_bgbuf.getvalue()).decode()
+                                    # 🔑 只有「文字非空」才放一個可編輯文字物件；清空文字＝畫布上沒有文字（這就是刪字）。
+                                    _txt_objs = []
+                                    if (text_input or "").strip():
+                                        _txt_objs = [{
+                                            "type": "i-text", "version": "4.4.0", "text": text_input,
+                                            # ⚠️ 用 session 內「目前」位置/大小/角度當初始值（不是固定的 def_*）：
+                                            # 拖過之後若畫布因改字重建，文字會回到「上次拖到的位置」而非跳回預設位置。
+                                            "left": float(x_pos * cscale), "top": float(y_pos * cscale),
+                                            "originX": "center", "originY": "center",
+                                            "fontSize": max(10, int(font_size * cscale)), "fill": text_color,
+                                            "angle": float(rotation_angle), "fontFamily": "sans-serif", "editable": True,
+                                        }]
                                     init = {
                                         "version": "4.4.0",
                                         "backgroundImage": {
@@ -1961,17 +1978,7 @@ if doc:
                                             "width": disp_w, "height": disp_h, "scaleX": 1, "scaleY": 1,
                                             "angle": 0, "opacity": 1, "crossOrigin": None, "filters": [],
                                         },
-                                        "objects": [
-                                            {
-                                                "type": "i-text", "version": "4.4.0", "text": text_input or "日期",
-                                                # ⚠️ 用「進入編輯當下的固定位置(def_*)」當初始值，不要用即時 x_pos：
-                                                # 這樣拖曳時 init 內容不變 → 畫布不會重載 → 不閃、不複製，拖到哪就停在哪。
-                                                "left": float(def_x * cscale), "top": float(def_y * cscale),
-                                                "originX": "center", "originY": "center",
-                                                "fontSize": max(10, int(def_size * cscale)), "fill": text_color,
-                                                "angle": float(def_rot), "fontFamily": "sans-serif", "editable": True,
-                                            },
-                                        ],
+                                        "objects": _txt_objs,
                                     }
                                     canvas_ok = False
                                     # 🔑 key 只隨「文字／顏色」變化：改字才整個重建(乾淨單一文字，不疊加)；
@@ -1980,8 +1987,11 @@ if doc:
                                     _ckey = f"cv_{slot_id}_{abs(hash(_csig))}"
                                     try:
                                         cres = st_canvas(initial_drawing=init,
-                                                         drawing_mode="transform", update_streamlit=False,
-                                                         height=disp_h, width=disp_w, display_toolbar=False,
+                                                         # 🔑 update_streamlit=True：拖曳/縮放/旋轉一放開就把新位置回傳 Python，
+                                                         # 這樣「完成編輯／確認儲存」存的才是你拖到的位置，不會跳回原位。
+                                                         # display_toolbar=True：顯示工具列垃圾桶 → 可刪除選取的文字。
+                                                         drawing_mode="transform", update_streamlit=True,
+                                                         height=disp_h, width=disp_w, display_toolbar=True,
                                                          background_color="#FFFFFF",
                                                          key=_ckey)
                                         canvas_ok = True
@@ -1990,9 +2000,9 @@ if doc:
                                         st.warning(f"⚠️ 畫布無法載入（{type(_ce).__name__}），改用拖曳編輯。")
                                     if canvas_ok:
                                         editor_shown = True
-                                        st.caption("✍️ 直接在畫布上「點兩下文字」就能打字、即時看到（不用透過上面的文字框）。"
-                                                   "拖曳文字＝移動、拉四角＝縮放、轉上方圓點＝旋轉。"
-                                                   "打完點一下畫面空白處收鍵盤，再按下方「✅ 確認儲存」。")
+                                        st.caption("✍️ 點兩下文字＝打字、拖曳＝移動、拉四角＝縮放、轉上方圓點＝旋轉。"
+                                                   "🗑️ 想刪文字：先點一下文字選取它，再按畫布工具列的垃圾桶（或把上面的『初始文字』清空）。"
+                                                   "喬好後按下方「✅ 確認儲存」即可（位置會即時記住，不會跳回原位）。")
                                         if cres is not None and getattr(cres, "json_data", None):
                                             objs = cres.json_data.get("objects", [])
                                             # objects[0] 現在是底圖影像，要挑出文字物件(i-text)來讀位置
@@ -2015,6 +2025,9 @@ if doc:
                                                 st.session_state[f"py_{slot_id}"] = y_pos
                                                 st.session_state[f"csz_{slot_id}"] = font_size
                                                 st.session_state[f"crot_{slot_id}"] = rotation_angle
+                                            else:
+                                                # 畫布上已沒有文字物件（被工具列垃圾桶刪掉）→ 存檔就不要壓任何文字。
+                                                text_input = ""
                                         final_img_to_save, text_w, text_h = _stamp_coupon(
                                             base_img, text_input, text_color, font_size, x_pos, y_pos, rotation_angle)
                             if (not editor_shown) and HAS_IMG_COORDS:

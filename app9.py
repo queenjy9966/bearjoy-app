@@ -1954,17 +1954,21 @@ if doc:
                                     _bgbuf = BytesIO(); bg.save(_bgbuf, format="PNG")
                                     bg_uri = "data:image/png;base64," + base64.b64encode(_bgbuf.getvalue()).decode()
                                     # 🔑 只有「文字非空」才放一個可編輯文字物件；清空文字＝畫布上沒有文字（這就是刪字）。
+                                    # init 的生成位置用「已提交的基準位置」(cinit*)，預設等於 def_*；
+                                    # 平時保持不動（拖曳期間 init 內容不變 → 同一把 key 下畫布不會重載複製出鬼影），
+                                    # 只有在下方「自動清疊字」重建畫布時，才更新成使用者拖到的位置。
+                                    _init_x = max(0, min(int(st.session_state.get(f"cinitx_{slot_id}", def_x)), base_img.width))
+                                    _init_y = max(0, min(int(st.session_state.get(f"cinity_{slot_id}", def_y)), base_img.height))
+                                    _init_sz = max(10, min(int(st.session_state.get(f"cinitsz_{slot_id}", def_size)), 200))
+                                    _init_rot = max(-180, min(int(st.session_state.get(f"cinitrot_{slot_id}", def_rot)), 180))
                                     _txt_objs = []
                                     if (text_input or "").strip():
                                         _txt_objs = [{
                                             "type": "i-text", "version": "4.4.0", "text": text_input,
-                                            # ⚠️ 一定要用「固定的 def_* 位置」當初始值，不能用即時 x_pos/y_pos：
-                                            # 拖曳時 init 內容若跟著變，畫布會重載 → 把文字複製一份產生鬼影/疊字。
-                                            # 固定 init → 拖曳期間 init 不變 → 畫布不重載 → 只有一個文字、拖到哪停哪。
-                                            "left": float(def_x * cscale), "top": float(def_y * cscale),
+                                            "left": float(_init_x * cscale), "top": float(_init_y * cscale),
                                             "originX": "center", "originY": "center",
-                                            "fontSize": max(10, int(def_size * cscale)), "fill": text_color,
-                                            "angle": float(def_rot), "fontFamily": "sans-serif", "editable": True,
+                                            "fontSize": max(10, int(_init_sz * cscale)), "fill": text_color,
+                                            "angle": float(_init_rot), "fontFamily": "sans-serif", "editable": True,
                                         }]
                                     init = {
                                         "version": "4.4.0",
@@ -1977,9 +1981,10 @@ if doc:
                                         "objects": _txt_objs,
                                     }
                                     canvas_ok = False
-                                    # 🔑 key 只隨「文字／顏色」變化：改字才整個重建(乾淨單一文字，不疊加)；
-                                    # 拖曳/縮放/旋轉不改 key → 畫布不重建 → 位置保留、放開即讀回並存檔。
-                                    _csig = f"{text_input}|{text_color}"
+                                    # 🔑 key 隨「文字／顏色／清字代次(nonce)」變化：改字或自動清疊字時整個重建
+                                    # (乾淨單一文字，不疊加)；拖曳/縮放/旋轉不改 key → 畫布不重建 → 位置保留、放開即讀回並存檔。
+                                    _cnonce = int(st.session_state.get(f"cvnonce_{slot_id}", 0))
+                                    _csig = f"{text_input}|{text_color}|{_cnonce}"
                                     _ckey = f"cv_{slot_id}_{abs(hash(_csig))}"
                                     try:
                                         cres = st_canvas(initial_drawing=init,
@@ -2003,7 +2008,17 @@ if doc:
                                         if cres is not None and getattr(cres, "json_data", None):
                                             objs = cres.json_data.get("objects", [])
                                             # objects[0] 現在是底圖影像，要挑出文字物件(i-text)來讀位置
-                                            o = next((ob for ob in objs if ob.get("type") == "i-text"), None)
+                                            itexts = [ob for ob in objs if ob.get("type") == "i-text"]
+                                            # 🧹 drawable-canvas 偶爾把同一段文字複製成多個物件(疊字/鬼影)。
+                                            # 從中挑「使用者實際拖動」的那一個＝離 init 生成點最遠者，
+                                            # 這樣移動任一個複本都會正確更新位置，不必先手動刪掉多餘的那個。
+                                            _ix = float(_init_x * cscale); _iy = float(_init_y * cscale)
+                                            def _moved_dist(ob):
+                                                lx0, ty0 = ob.get("left"), ob.get("top")
+                                                if lx0 is None or ty0 is None:
+                                                    return -1.0
+                                                return math.hypot(float(lx0) - _ix, float(ty0) - _iy)
+                                            o = max(itexts, key=_moved_dist) if itexts else None
                                             if o:
                                                 sx = float(o.get("scaleX", 1) or 1)
                                                 ang = float(o.get("angle", 0) or 0)
@@ -2022,6 +2037,16 @@ if doc:
                                                 st.session_state[f"py_{slot_id}"] = y_pos
                                                 st.session_state[f"csz_{slot_id}"] = font_size
                                                 st.session_state[f"crot_{slot_id}"] = rotation_angle
+                                                # 🧹 自動清疊字：偵測到多個文字物件、且其中有人被真的拖走(>4px)時，
+                                                # 把基準位置(cinit*)更新成「拖到的位置」並換 key 重建畫布 → 收斂成單一文字，
+                                                # 不勞使用者手動刪。清完後單一物件距 init=0，不會再觸發，避免無限重跑。
+                                                if len(itexts) > 1 and _moved_dist(o) > 4:
+                                                    st.session_state[f"cinitx_{slot_id}"] = x_pos
+                                                    st.session_state[f"cinity_{slot_id}"] = y_pos
+                                                    st.session_state[f"cinitsz_{slot_id}"] = font_size
+                                                    st.session_state[f"cinitrot_{slot_id}"] = rotation_angle
+                                                    st.session_state[f"cvnonce_{slot_id}"] = _cnonce + 1
+                                                    st.rerun()
                                             else:
                                                 # 畫布上已沒有文字物件（被工具列垃圾桶刪掉）→ 存檔就不要壓任何文字。
                                                 text_input = ""
@@ -2082,10 +2107,15 @@ if doc:
                             if st.session_state.get("edit_slot") == slot_id:
                                 if _bc1.button("↩ 完成編輯", key=f"endcv_{slot_id}", use_container_width=True):
                                     st.session_state.edit_slot = None
+                                    # 清掉本次編輯的疊字清理暫存，下次編輯從已存位置乾淨起步
+                                    for _k in ("cinitx", "cinity", "cinitsz", "cinitrot", "cvnonce"):
+                                        st.session_state.pop(f"{_k}_{slot_id}", None)
                                     st.rerun()
                             else:
                                 if _bc1.button("🎨 編輯文字", key=f"startcv_{slot_id}", use_container_width=True):
                                     st.session_state.edit_slot = slot_id
+                                    for _k in ("cinitx", "cinity", "cinitsz", "cinitrot", "cvnonce"):
+                                        st.session_state.pop(f"{_k}_{slot_id}", None)
                                     st.rerun()
                             save_clicked = _bc2.button("✅ 確認儲存", type="primary", use_container_width=True, key=f"btn_save_{slot_id}")
                         else:

@@ -219,6 +219,13 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) > div[data-testid="column"]:last-child {
         margin-left: -10px !important;
     }
+    /* ✨ 可複製區塊（建議回覆範本／私訊內容）：字放大、行距拉開、長行自動換行不要橫向捲 */
+    div[data-testid="stCode"] pre, div[data-testid="stCode"] code,
+    .stCode pre, .stCode code {
+        font-size: 14.5px !important; line-height: 1.8 !important;
+        white-space: pre-wrap !important; word-break: break-word !important;
+    }
+    div[data-testid="stCode"] pre { padding: 14px 16px !important; }
     /* ✨ 折價券文字「微調鍵」：手機不用拖曳也能移動／縮放／旋轉（拖曳把手太小很難按） */
     div[data-testid="stHorizontalBlock"]:has(.nudge-row) {
         gap: 6px !important; flex-wrap: nowrap !important; align-items: center !important;
@@ -689,6 +696,36 @@ def _strip_md(text):
 # ==========================================
 QA_SHEET = "客服問題庫"
 QA_COLS = ["ID", "分類", "問題標題", "客戶問題範例", "建議回覆範本", "關鍵字", "更新時間"]
+# 內建預設分類（第一次用就有東西可選）；之後可在介面「管理分類」自行增刪改，改完存雲端。
+QA_DEFAULT_CATS = ["物流出貨", "退換貨", "商品規格", "付款發票", "折價券優惠",
+                   "售後保固", "訂單修改", "客訴負評", "其他"]
+QA_CATS_KEY = "qa_cats"
+
+def qa_cats_load(doc):
+    """讀分類清單（存在「系統設定」的 qa_cats，用｜分隔）；沒設定過就回傳預設清單。
+    只讀第一欄＋單一格，不會把系統設定裡折價券的 base64 大資料整包抓下來。"""
+    try:
+        ws = get_or_create_ws(doc, "系統設定")
+        col = ws.col_values(1)
+        if QA_CATS_KEY in col:
+            v = ws.cell(col.index(QA_CATS_KEY) + 1, 2).value or ""
+            cats = [c.strip() for c in v.split("｜") if c.strip()]
+            if cats:
+                return cats, ws
+        return list(QA_DEFAULT_CATS), ws
+    except Exception:
+        return list(QA_DEFAULT_CATS), None
+
+def qa_cats_save(ws, cats):
+    """存回分類清單（去重、保留順序），回傳整理後的清單。"""
+    seen, out = set(), []
+    for c in cats:
+        c = (c or "").strip()
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    _save_kv(ws, QA_CATS_KEY, "｜".join(out))
+    return out
 
 def qa_load(doc):
     """讀取客服問題庫；空表自動補表頭。回傳 (ws, list[dict])，每筆含 _row 實際列號供更新/刪除。"""
@@ -875,52 +912,66 @@ def qa_ai_from_chat(api_key, chat_text, model=GEMINI_DEFAULT, images=None, hint=
     return [it for it in items if it["問題標題"] or it["客戶問題範例"]], usage
 
 # ==========================================
-# 💌 私訊待辦：公開回覆先發、私訊之後有空再回，這裡把已產出的私訊回覆存著隨時叫出來
-#    直接用原本的「回覆紀錄」分頁，只在後面多兩欄狀態，不動既有五欄資料。
+# 💌 私訊查詢：公開回覆先發、私訊過幾天再回時，用搜尋叫出「當初那則評價 ＋ 要私訊的內容」
+#    純查詢，不做任何狀態管理，也完全不寫入雲端（只讀「回覆紀錄」與「評價截圖素材」）。
 # ==========================================
 DM_SHEET = "回覆紀錄"
 DM_BASE_COLS = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"]
-DM_STATUS_COL = "私訊狀態"
-DM_TIME_COL = "私訊完成時間"
-DM_DONE = "已私訊"
-
-def _a1_col(n):
-    """1 → A、27 → AA（寫表頭範圍用）。"""
-    s = ""
-    while n > 0:
-        n, r = divmod(n - 1, 26)
-        s = chr(65 + r) + s
-    return s
+MAT_SHEET = "評價截圖素材"
 
 def dm_load(doc):
-    """讀「回覆紀錄」；缺「私訊狀態／私訊完成時間」兩欄就補表頭（只加欄、不動既有資料）。
-    回傳 (ws, rows, col_idx)；rows 由新到舊排序，每筆含 _row 實際列號供標記用。"""
+    """唯讀取「回覆紀錄」。回傳 (ws, rows)；rows 由新到舊，每筆含 _row 實際列號。"""
     ws = get_or_create_ws(doc, DM_SHEET)
     values = ws.get_all_values()
-    header = list(values[0]) if values and any((c or "").strip() for c in values[0]) else []
-    if not header:
-        header = DM_BASE_COLS + [DM_STATUS_COL, DM_TIME_COL]
-        ws.update(values=[header], range_name=f"A1:{_a1_col(len(header))}1", value_input_option="RAW")
-        return ws, [], {c: i + 1 for i, c in enumerate(header)}
-    added = [c for c in (DM_STATUS_COL, DM_TIME_COL) if c not in header]
-    if added:
-        header = header + added
-        ws.update(values=[header], range_name=f"A1:{_a1_col(len(header))}1", value_input_option="RAW")
-    idx = {c: i + 1 for i, c in enumerate(header)}
+    if not values or not any((c or "").strip() for c in values[0]):
+        return ws, []
+    header = list(values[0])
     rows = []
     for i, r in enumerate(values[1:], start=2):
         if not any((c or "").strip() for c in r):
             continue
         d = {c: (r[j] if j < len(r) else "") for j, c in enumerate(header)}
+        for c in DM_BASE_COLS:                 # 舊表缺欄也不會 KeyError
+            d.setdefault(c, "")
         d["_row"] = i
         rows.append(d)
     rows.reverse()          # 最新的排最上面
-    return ws, rows, idx
+    return ws, rows
 
-def dm_mark(ws, row, idx, done):
-    """標記／取消標記某一列的私訊狀態（只寫那兩格，不動其他欄位）。"""
-    ws.update_cell(row, idx[DM_STATUS_COL], DM_DONE if done else "")
-    ws.update_cell(row, idx[DM_TIME_COL], datetime.now().strftime("%Y-%m-%d %H:%M") if done else "")
+def review_shot_find(doc, acc, ts):
+    """在「評價截圖素材」找這位客戶當初的評價截圖。
+    素材列的第一欄是 f"{年月日_時分秒}_{帳號}|||{規格}"，與回覆紀錄同一個時間戳，先比同秒、
+    再退回同帳號最近一張。只讀第一欄（很輕，不會把整批 base64 圖抓下來）。
+    回傳 (ws, 列號) 或 (None, None)。"""
+    try:
+        ws = get_or_create_ws(doc, MAT_SHEET)
+        keys = ws.col_values(1)
+    except Exception:
+        return None, None
+    try:
+        stamp = datetime.strptime((ts or "").strip(), "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d_%H%M%S")
+    except Exception:
+        stamp = ""
+    tail = "_" + (acc or "").strip()
+    same_acc = []
+    for i, k in enumerate(keys, start=1):
+        head = str(k or "").split("|||")[0].strip()
+        if not head:
+            continue
+        if not head.endswith(tail):
+            continue
+        if stamp and head.startswith(stamp):
+            return ws, i                      # 同秒＝就是這則評價的原圖
+        same_acc.append(i)
+    return (ws, same_acc[-1]) if same_acc else (None, None)
+
+def review_shot_load(ws, row):
+    """把素材那一列的 base64 切塊還原成圖片（只抓那一列）。失敗回 None。"""
+    try:
+        vals = ws.row_values(row)
+        return base64_chunks_to_img([c for c in vals[1:] if c])
+    except Exception:
+        return None
 
 # 💰 全程式共用的花費累計（任何用到 API 的功能都呼叫這兩個，介面就有一致的費用顯示）
 def ai_track_cost(usage):
@@ -1378,7 +1429,7 @@ is_connected = bool(api_key and sheet_url and doc)
 
 with st.sidebar:
     st.markdown("### ✦ BearJoy 導航")
-    menu = st.radio("功能選單", ["智能客服系統", "折價券管理"], label_visibility="collapsed")
+    menu = st.radio("功能選單", ["智能客服系統", "問題分類庫", "折價券管理"], label_visibility="collapsed")
     st.markdown('<div style="flex-grow: 1; min-height: 50vh;"></div>', unsafe_allow_html=True)
     
     # 🛡️ 資安魔法：只要成功連線，不管手機或電腦，密碼框完全消失！
@@ -1430,8 +1481,7 @@ if doc:
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["批次評價處理", "VIP 顧客管理", "好評洞察 / 素材",
-                                                "問題分類庫 / 範本", "私訊待辦"])
+        tab1, tab2, tab3, tab5 = st.tabs(["批次評價處理", "VIP 顧客管理", "好評洞察 / 素材", "私訊查詢"])
 
         with tab1:
             col_up, col_res = st.columns([1, 1.5], gap="large")
@@ -2094,344 +2144,25 @@ if doc:
                         st.error(f"打包失敗：{e}")
 
         # ==========================================
-        # 📚 Tab4：客服問題分類庫（分類 / 編輯 / 搜尋 / AI 建議回覆 / 一鍵複製範本）
-        # ==========================================
-        with tab4:
-            with st.container(border=True):
-                section_block("📚", "客服問題分類庫",
-                              "把常見客訴與提問分門別類存起來，下次遇到就「搜尋 → 複製範本」直接回覆客人。"
-                              "可隨時編輯，也能用 AI（可選模型、可上傳客戶截圖）幫你生成建議回覆。資料存雲端，手機電腦同步。")
-                if not doc:
-                    st.info("請先在左側完成連線，才能使用問題庫。")
-                else:
-                    try:
-                        qa_ws, qa_rows = qa_load(doc)
-                        qa_err = None
-                    except Exception as e:
-                        qa_ws, qa_rows, qa_err = None, [], e
-                        st.error(f"讀取問題庫失敗：{e}")
-
-                    if qa_ws is not None:
-                        cats = sorted({(r["分類"] or "").strip() for r in qa_rows if (r["分類"] or "").strip()})
-
-                        # 🤖 AI 模型選擇（預設免費款） + 💰 花費顯示（本次／累計）
-                        _mkeys = list(GEMINI_PRICES.keys())
-                        mc1, mc2 = st.columns([2, 3])
-                        sel_model = mc1.selectbox(
-                            "🤖 AI 模型", _mkeys,
-                            index=_mkeys.index(GEMINI_DEFAULT),
-                            format_func=lambda k: GEMINI_PRICES[k]["label"], key="qa_model",
-                            help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")
-                        with mc2:
-                            ai_render_cost(sel_model)
-
-                        # ➕ 新增問題範本（含 AI 生成建議回覆）
-                        with st.expander("➕ 新增問題範本", expanded=not qa_rows):
-                            a1, a2 = st.columns([1, 2])
-                            a1.text_input("分類", key="qa_new_cat",
-                                          placeholder="退換貨 / 物流 / 商品規格 / 折價券…")
-                            a2.text_input("問題標題", key="qa_new_title",
-                                          placeholder="例如 包裹遲遲未到")
-                            st.text_area("客戶問題範例", key="qa_new_q", height=80,
-                                         placeholder="客人實際會怎麼問（也是 AI 生成的依據；可只上傳截圖）")
-                            qa_new_img = st.file_uploader(
-                                "📷 上傳客戶問題截圖（選填，AI 會一起讀圖內容）",
-                                type=["png", "jpg", "jpeg"], key="qa_new_img")
-                            if st.button("🤖 用 AI 生成建議回覆", key="qa_new_ai", use_container_width=True):
-                                _img = _pil_from_upload(qa_new_img)
-                                if not api_key:
-                                    st.warning("尚未設定 API 金鑰，無法使用 AI。")
-                                elif not (st.session_state.get("qa_new_q", "").strip() or _img is not None):
-                                    st.warning("請先填「客戶問題範例」或上傳截圖，AI 才知道要回什麼。")
-                                else:
-                                    with st.spinner("AI 生成中…"):
-                                        out, usage = qa_ai_suggest(
-                                            api_key, st.session_state.get("qa_new_cat", ""),
-                                            st.session_state.get("qa_new_q", ""),
-                                            model=st.session_state.get("qa_model", GEMINI_DEFAULT),
-                                            image=_img)
-                                    ai_track_cost(usage)
-                                    if out:
-                                        st.session_state["qa_new_reply"] = out
-                                        st.rerun()
-                                    else:
-                                        st.error("AI 生成失敗，請稍後再試。")
-                            st.text_area("建議回覆範本（可直接編輯）", key="qa_new_reply", height=160,
-                                         placeholder="可手動輸入，或按上方按鈕讓 AI 生成後再微調")
-                            st.text_input("關鍵字（用空格分隔，方便日後搜尋）", key="qa_new_kw",
-                                          placeholder="例如 退貨 七天 鑑賞期")
-                            if st.button("💾 儲存到問題庫", key="qa_new_save", type="primary",
-                                         use_container_width=True):
-                                _title = st.session_state.get("qa_new_title", "").strip()
-                                _q = st.session_state.get("qa_new_q", "").strip()
-                                if not (_title or _q):
-                                    st.warning("至少要填「問題標題」或「客戶問題範例」其中一項。")
-                                else:
-                                    rec = {"ID": datetime.now().strftime("%Y%m%d%H%M%S%f"),
-                                           "分類": st.session_state.get("qa_new_cat", "").strip(),
-                                           "問題標題": _title,
-                                           "客戶問題範例": _q,
-                                           "建議回覆範本": st.session_state.get("qa_new_reply", "").strip(),
-                                           "關鍵字": st.session_state.get("qa_new_kw", "").strip(),
-                                           "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
-                                    try:
-                                        qa_add(qa_ws, rec)
-                                        for k in ["qa_new_cat", "qa_new_title", "qa_new_q",
-                                                  "qa_new_reply", "qa_new_kw"]:
-                                            st.session_state.pop(k, None)
-                                        st.success("已新增到問題庫 ✅")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"儲存失敗：{e}")
-
-                        # 📥 從蝦皮客服對話批次匯入：貼上對話或上傳截圖 → AI 拆成一題一筆 → 挑選後存進問題庫
-                        with st.expander("📥 從蝦皮客服對話批次匯入（AI 自動分類）", expanded=False):
-                            st.caption("把蝦皮聊聊的對話整段貼進來（或直接上傳對話截圖），AI 會拆成「一個問題一筆」，"
-                                       "回覆以你當時實際回過的內容為準做潤飾，個資會自動拿掉。存進去之後就能用上面的搜尋叫出來複製。")
-                            imp_text = st.text_area("貼上蝦皮客服對話", key="qa_imp_text", height=170,
-                                                    placeholder="客人：請問這個發貨要幾天？\n我：您好～目前備貨約 1-2 個工作天…")
-                            imp_imgs = st.file_uploader("📷 或上傳對話截圖（可多張）", type=["png", "jpg", "jpeg"],
-                                                        accept_multiple_files=True, key="qa_imp_imgs")
-                            imp_hint = st.text_input("補充說明（選填，例如：這是同一位客人的退貨案）", key="qa_imp_hint")
-                            if st.button("🤖 分析並整理成問題範本", key="qa_imp_run", use_container_width=True):
-                                _imgs = [_pil_from_upload(f) for f in (imp_imgs or [])]
-                                _imgs = [i for i in _imgs if i is not None]
-                                if not api_key:
-                                    st.warning("尚未設定 API 金鑰，無法使用 AI。")
-                                elif not ((imp_text or "").strip() or _imgs):
-                                    st.warning("請先貼上對話內容或上傳截圖。")
-                                else:
-                                    with st.spinner("AI 整理中…（對話越長越久，請稍候）"):
-                                        items, usage = qa_ai_from_chat(
-                                            api_key, imp_text,
-                                            model=st.session_state.get("qa_model", GEMINI_DEFAULT),
-                                            images=_imgs, hint=imp_hint or "")
-                                    ai_track_cost(usage)
-                                    if items:
-                                        st.session_state["qa_imp_items"] = items
-                                        # 清掉上一批的編輯暫存，避免新舊資料混在一起
-                                        for k in [k for k in list(st.session_state.keys())
-                                                  if str(k).startswith("qa_ip_")]:
-                                            st.session_state.pop(k, None)
-                                        st.rerun()
-                                    else:
-                                        st.error("AI 沒有整理出結果（可能對話太短或格式看不懂），"
-                                                 "可以再貼一次或改用截圖試試。")
-
-                            _imp_items = st.session_state.get("qa_imp_items") or []
-                            if _imp_items:
-                                _exist_titles = {(r["問題標題"] or "").strip() for r in qa_rows}
-                                st.success(f"AI 整理出 {len(_imp_items)} 筆，確認內容後再存入（可直接修改）：")
-                                for _i, _it in enumerate(_imp_items):
-                                    _dup = _it["問題標題"].strip() in _exist_titles and _it["問題標題"].strip() != ""
-                                    # 先把 AI 結果放進 session_state 當預設值，再建立元件（同時給 value 與 key 會跳警告）
-                                    st.session_state.setdefault(f"qa_ip_use_{_i}", not _dup)
-                                    for _f, _k in (("分類", "cat"), ("問題標題", "title"), ("客戶問題範例", "q"),
-                                                   ("建議回覆範本", "reply"), ("關鍵字", "kw")):
-                                        st.session_state.setdefault(f"qa_ip_{_k}_{_i}", _it[_f])
-                                    with st.container(border=True):
-                                        st.checkbox(
-                                            f"{'⚠️ 問題庫已有同名範本：' if _dup else ''}{_it['問題標題'] or '（未命名）'}",
-                                            key=f"qa_ip_use_{_i}")
-                                        p1, p2 = st.columns([1, 2])
-                                        p1.text_input("分類", key=f"qa_ip_cat_{_i}")
-                                        p2.text_input("問題標題", key=f"qa_ip_title_{_i}")
-                                        st.text_area("客戶問題範例", key=f"qa_ip_q_{_i}", height=70)
-                                        st.text_area("建議回覆範本", key=f"qa_ip_reply_{_i}", height=140)
-                                        st.text_input("關鍵字", key=f"qa_ip_kw_{_i}")
-                                v1, v2 = st.columns(2)
-                                if v1.button("💾 把勾選的存進問題庫", key="qa_imp_save", type="primary",
-                                             use_container_width=True):
-                                    _new = []
-                                    for _i in range(len(_imp_items)):
-                                        if not st.session_state.get(f"qa_ip_use_{_i}"):
-                                            continue
-                                        _ti = st.session_state.get(f"qa_ip_title_{_i}", "").strip()
-                                        _qi = st.session_state.get(f"qa_ip_q_{_i}", "").strip()
-                                        if not (_ti or _qi):
-                                            continue
-                                        _new.append([datetime.now().strftime("%Y%m%d%H%M%S%f") + str(_i),
-                                                     st.session_state.get(f"qa_ip_cat_{_i}", "").strip(),
-                                                     _ti, _qi,
-                                                     st.session_state.get(f"qa_ip_reply_{_i}", "").strip(),
-                                                     st.session_state.get(f"qa_ip_kw_{_i}", "").strip(),
-                                                     datetime.now().strftime("%Y-%m-%d %H:%M")])
-                                    if not _new:
-                                        st.warning("沒有勾選任何一筆（或勾選的都沒填標題／問題）。")
-                                    else:
-                                        try:
-                                            qa_ws.append_rows(_new, value_input_option="RAW")
-                                            st.session_state.pop("qa_imp_items", None)
-                                            st.session_state.pop("qa_imp_text", None)
-                                            for _k in [k for k in list(st.session_state.keys())
-                                                       if str(k).startswith("qa_ip_")]:
-                                                st.session_state.pop(_k, None)
-                                            st.success(f"已存入 {len(_new)} 筆 ✅")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"存入失敗：{e}")
-                                if v2.button("✖ 丟掉這批結果", key="qa_imp_drop", use_container_width=True):
-                                    st.session_state.pop("qa_imp_items", None)
-                                    for _k in [k for k in list(st.session_state.keys())
-                                               if str(k).startswith("qa_ip_")]:
-                                        st.session_state.pop(_k, None)
-                                    st.rerun()
-
-                        st.divider()
-
-                        # 🔍 搜尋 + 分類篩選
-                        c_s, c_f = st.columns([2, 1])
-                        kw = c_s.text_input("🔍 搜尋（標題 / 問題 / 回覆 / 關鍵字，可空格多關鍵字）", key="qa_kw")
-                        pick = c_f.selectbox("分類篩選", ["全部"] + cats, key="qa_filter")
-
-                        def _qa_match(r):
-                            if pick != "全部" and (r["分類"] or "").strip() != pick:
-                                return False
-                            kws = (kw or "").lower().split()
-                            if kws:
-                                blob = " ".join([r["分類"], r["問題標題"], r["客戶問題範例"],
-                                                 r["建議回覆範本"], r["關鍵字"]]).lower()
-                                return all(t in blob for t in kws)
-                            return True
-
-                        shown = [r for r in qa_rows if _qa_match(r)]
-                        # 最新更新的排最上面
-                        shown.sort(key=lambda r: r.get("更新時間", ""), reverse=True)
-                        st.caption(f"問題庫共 {len(qa_rows)} 筆，符合條件 {len(shown)} 筆")
-
-                        if not qa_rows:
-                            st.info("問題庫還是空的，先用上方「➕ 新增問題範本」建立第一筆吧！")
-
-                        for r in shown:
-                            with st.container(border=True):
-                                if st.session_state.get("qa_edit") == r["_row"]:
-                                    # ✏️ 編輯模式
-                                    e1, e2 = st.columns([1, 2])
-                                    ecat = e1.text_input("分類", key=f"qa_e_cat_{r['_row']}")
-                                    etitle = e2.text_input("問題標題", key=f"qa_e_title_{r['_row']}")
-                                    eq = st.text_area("客戶問題範例", key=f"qa_e_q_{r['_row']}", height=80)
-                                    e_img = st.file_uploader(
-                                        "📷 上傳客戶問題截圖（選填，AI 會一起讀）",
-                                        type=["png", "jpg", "jpeg"], key=f"qa_e_img_{r['_row']}")
-                                    if st.button("🤖 AI 重新生成建議回覆", key=f"qa_e_ai_{r['_row']}",
-                                                 use_container_width=True):
-                                        _eimg = _pil_from_upload(e_img)
-                                        if not api_key:
-                                            st.warning("尚未設定 API 金鑰。")
-                                        elif not (eq.strip() or _eimg is not None):
-                                            st.warning("請先填客戶問題範例或上傳截圖。")
-                                        else:
-                                            with st.spinner("AI 生成中…"):
-                                                out, usage = qa_ai_suggest(
-                                                    api_key, ecat, eq,
-                                                    model=st.session_state.get("qa_model", GEMINI_DEFAULT),
-                                                    image=_eimg)
-                                            ai_track_cost(usage)
-                                            if out:
-                                                st.session_state[f"qa_e_reply_{r['_row']}"] = out
-                                                st.rerun()
-                                            else:
-                                                st.error("AI 生成失敗。")
-                                    ereply = st.text_area("建議回覆範本", key=f"qa_e_reply_{r['_row']}", height=160)
-                                    ekw = st.text_input("關鍵字", key=f"qa_e_kw_{r['_row']}")
-                                    s1, s2 = st.columns(2)
-                                    if s1.button("💾 儲存", key=f"qa_e_save_{r['_row']}", type="primary",
-                                                 use_container_width=True):
-                                        rec = {"ID": r["ID"] or datetime.now().strftime("%Y%m%d%H%M%S%f"),
-                                               "分類": ecat.strip(), "問題標題": etitle.strip(),
-                                               "客戶問題範例": eq.strip(), "建議回覆範本": ereply.strip(),
-                                               "關鍵字": ekw.strip(),
-                                               "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
-                                        try:
-                                            qa_update(qa_ws, r["_row"], rec)
-                                            st.session_state.pop("qa_edit", None)
-                                            st.success("已更新 ✅")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"更新失敗：{e}")
-                                    if s2.button("✖ 取消", key=f"qa_e_cancel_{r['_row']}",
-                                                 use_container_width=True):
-                                        st.session_state.pop("qa_edit", None)
-                                        st.rerun()
-                                else:
-                                    # 👁️ 檢視模式
-                                    tag = f"`{r['分類']}`　" if (r["分類"] or "").strip() else ""
-                                    st.markdown(f"#### {tag}{r['問題標題'] or '（未命名問題）'}")
-                                    if (r["客戶問題範例"] or "").strip():
-                                        st.markdown(
-                                            f"<div style='color:#798571; margin-bottom:6px;'>💬 {r['客戶問題範例']}</div>",
-                                            unsafe_allow_html=True)
-                                    if (r["關鍵字"] or "").strip():
-                                        st.caption(f"🏷️ {r['關鍵字']}")
-                                    if (r["建議回覆範本"] or "").strip():
-                                        st.markdown("**📋 建議回覆範本（點右上角圖示即可複製）：**")
-                                        st.code(r["建議回覆範本"], language="text")
-                                    cinfo, ce, cd = st.columns([3, 1, 1])
-                                    if (r["更新時間"] or "").strip():
-                                        cinfo.caption(f"🕒 {r['更新時間']}")
-                                    if ce.button("✏️ 編輯", key=f"qa_edit_btn_{r['_row']}",
-                                                 use_container_width=True):
-                                        st.session_state.qa_edit = r["_row"]
-                                        st.session_state[f"qa_e_cat_{r['_row']}"] = r["分類"]
-                                        st.session_state[f"qa_e_title_{r['_row']}"] = r["問題標題"]
-                                        st.session_state[f"qa_e_q_{r['_row']}"] = r["客戶問題範例"]
-                                        st.session_state[f"qa_e_reply_{r['_row']}"] = r["建議回覆範本"]
-                                        st.session_state[f"qa_e_kw_{r['_row']}"] = r["關鍵字"]
-                                        st.rerun()
-                                    if st.session_state.get("qa_del") == r["_row"]:
-                                        st.warning("確定要刪除這筆範本嗎？刪了無法復原。")
-                                        d1, d2 = st.columns(2)
-                                        if d1.button("🗑️ 確定刪除", key=f"qa_del_yes_{r['_row']}",
-                                                     use_container_width=True):
-                                            try:
-                                                qa_delete(qa_ws, r["_row"])
-                                                st.session_state.pop("qa_del", None)
-                                                st.success("已刪除 ✅")
-                                                st.rerun()
-                                            except Exception as e:
-                                                st.error(f"刪除失敗：{e}")
-                                        if d2.button("取消", key=f"qa_del_no_{r['_row']}",
-                                                     use_container_width=True):
-                                            st.session_state.pop("qa_del", None)
-                                            st.rerun()
-                                    else:
-                                        if cd.button("🗑️ 刪除", key=f"qa_del_btn_{r['_row']}",
-                                                     use_container_width=True):
-                                            st.session_state.qa_del = r["_row"]
-                                            st.rerun()
-
-        # ==========================================
-        # 💌 Tab5：私訊待辦（把已產出的私訊回覆叫出來，複製貼給客人後標記完成）
+        # 💌 Tab5：私訊查詢（搜尋客戶 → 看當初那則評價 → 複製要私訊的內容；不做狀態管理）
         # ==========================================
         with tab5:
             with st.container(border=True):
-                section_block("💌", "私訊待辦",
-                              "公開回覆先發、私訊過幾天再回也不會漏：這裡列出「批次評價處理」產出過的每一則私訊回覆，"
-                              "點右上角圖示複製貼給客人，回完按「✅ 標記已私訊」即可。資料存雲端，手機電腦同步。")
+                section_block("💌", "私訊查詢",
+                              "公開回覆先發、私訊過幾天再回時用這裡：打客戶帳號（或評價裡的任何字）就會叫出"
+                              "當初那則評價，以及當時幫你寫好的私訊內容，點右上角圖示複製直接貼給客人。")
                 if not doc:
-                    st.info("請先在左側完成連線，才能查看私訊待辦。")
+                    st.info("請先在左側完成連線，才能查詢。")
                 else:
                     try:
-                        dm_ws, dm_rows, dm_idx = dm_load(doc)
-                        dm_err = None
+                        dm_ws, dm_rows = dm_load(doc)
                     except Exception as e:
-                        dm_ws, dm_rows, dm_idx, dm_err = None, [], {}, e
+                        dm_ws, dm_rows = None, []
                         st.error(f"讀取回覆紀錄失敗：{e}")
 
                     if dm_ws is not None:
-                        _todo = [r for r in dm_rows if (r.get(DM_STATUS_COL, "") or "").strip() != DM_DONE]
-                        _done = [r for r in dm_rows if (r.get(DM_STATUS_COL, "") or "").strip() == DM_DONE]
-
-                        f1, f2 = st.columns([1.2, 1])
-                        view = f1.radio("要看哪些", [f"⏳ 待私訊（{len(_todo)}）",
-                                                     f"✅ 已私訊（{len(_done)}）",
-                                                     f"全部（{len(dm_rows)}）"],
-                                        horizontal=True, key="dm_view", label_visibility="collapsed")
-                        dm_kw = f2.text_input("🔍 搜尋（帳號 / 評價內容 / 私訊內容）", key="dm_kw",
-                                              label_visibility="collapsed",
-                                              placeholder="🔍 搜尋帳號或內容")
-
-                        pool = _todo if view.startswith("⏳") else (_done if view.startswith("✅") else dm_rows)
+                        dm_kw = st.text_input("搜尋", key="dm_kw", label_visibility="collapsed",
+                                              placeholder="🔍 打客戶帳號或評價裡的字（例如 hasqwsky、三層款）")
 
                         def _dm_match(r):
                             kws = (dm_kw or "").lower().split()
@@ -2441,64 +2172,385 @@ if doc:
                                              ("客戶帳號", "原始評價內容", "VIP私訊回覆", "紀錄時間")]).lower()
                             return all(t in blob for t in kws)
 
-                        shown_dm = [r for r in pool if _dm_match(r)]
-                        _limit = int(st.session_state.get("dm_limit", 15))
-                        st.caption(f"共 {len(shown_dm)} 筆，目前顯示最新 {min(_limit, len(shown_dm))} 筆"
-                                   f"　·　⏳ 待私訊 {len(_todo)} 筆")
+                        _searching = bool((dm_kw or "").strip())
+                        shown_dm = [r for r in dm_rows if _dm_match(r)]
+                        _limit = len(shown_dm) if _searching else 8
 
                         if not dm_rows:
-                            st.info("還沒有任何紀錄。到「批次評價處理」跑過一批評價之後，私訊回覆就會自動出現在這裡。")
-                        elif not shown_dm:
-                            st.info("這個條件下沒有資料，換個關鍵字或切換上面的篩選看看。")
+                            st.info("還沒有任何紀錄。到「批次評價處理」跑過一批評價之後，私訊內容就會出現在這裡。")
+                        elif _searching:
+                            st.caption(f"找到 {len(shown_dm)} 筆（共 {len(dm_rows)} 筆紀錄）")
+                            if not shown_dm:
+                                st.info("找不到符合的紀錄，換個關鍵字試試（帳號大小寫沒關係）。")
+                        else:
+                            st.caption(f"共 {len(dm_rows)} 筆紀錄，先顯示最新 8 筆；要找特定客人請在上面搜尋。")
 
                         for r in shown_dm[:_limit]:
                             with st.container(border=True):
-                                _done_flag = (r.get(DM_STATUS_COL, "") or "").strip() == DM_DONE
                                 _acc = (r.get("客戶帳號", "") or "未知").strip()
-                                _badge = "✅ 已私訊" if _done_flag else "⏳ 待私訊"
-                                st.markdown(f"#### 👤 {_acc}　`{_badge}`")
                                 _t = (r.get("紀錄時間", "") or "").strip()
-                                _dt = (r.get(DM_TIME_COL, "") or "").strip()
-                                st.caption(f"🕒 產出於 {_t}" + (f"　·　私訊完成 {_dt}" if _dt else ""))
+                                st.markdown(f"#### 👤 {_acc}")
+                                st.caption(f"🕒 {_t}")
                                 _rev = (r.get("原始評價內容", "") or "").strip()
                                 if _rev:
+                                    st.markdown("**📝 當初的評價：**")
                                     st.markdown(
-                                        f"<div style='color:#798571; margin-bottom:6px;'>📝 {_rev[:120]}"
-                                        f"{'…' if len(_rev) > 120 else ''}</div>", unsafe_allow_html=True)
+                                        "<div style='background:#FFFFFF; border:1px solid #E6E2D8; border-radius:8px;"
+                                        "padding:10px 12px; color:#4A4238; white-space:pre-wrap; margin-bottom:8px;'>"
+                                        f"{_rev}</div>", unsafe_allow_html=True)
                                 _priv = (r.get("VIP私訊回覆", "") or "").strip()
                                 if _priv:
-                                    st.markdown("**💌 私訊回覆（點右上角圖示即可複製）：**")
+                                    st.markdown("**💌 要私訊的內容（點右上角圖示即可複製）：**")
                                     st.code(_priv, language="text")
                                 else:
                                     st.caption("（這筆沒有私訊內容）")
-                                if _done_flag:
-                                    if st.button("↩ 取消標記（改回待私訊）", key=f"dm_undo_{r['_row']}",
-                                                 use_container_width=True):
-                                        try:
-                                            dm_mark(dm_ws, r["_row"], dm_idx, False)
-                                            st.success("已改回待私訊")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"更新失敗：{e}")
-                                else:
-                                    if st.button("✅ 標記已私訊", key=f"dm_done_{r['_row']}",
-                                                 type="primary", use_container_width=True):
-                                        try:
-                                            dm_mark(dm_ws, r["_row"], dm_idx, True)
-                                            st.success("已標記完成 ✅")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"更新失敗：{e}")
 
-                        if len(shown_dm) > _limit:
-                            if st.button(f"⬇️ 再顯示 15 筆（還有 {len(shown_dm) - _limit} 筆）",
-                                         key="dm_more", use_container_width=True):
-                                st.session_state["dm_limit"] = _limit + 15
+                                # 🖼️ 當初的評價截圖：存在「評價截圖素材」分頁，按了才去抓（圖很大，不預先載）
+                                _shk = f"dm_shot_{r['_row']}"
+                                if not st.session_state.get(_shk):
+                                    if st.button("🖼️ 看當初的評價截圖", key=f"dm_shotbtn_{r['_row']}",
+                                                 use_container_width=True):
+                                        st.session_state[_shk] = True
+                                        st.rerun()
+                                else:
+                                    _cache = st.session_state.setdefault("_shotimgs", {})
+                                    if r["_row"] not in _cache:
+                                        with st.spinner("讀取截圖中…"):
+                                            _sws, _srow = review_shot_find(doc, _acc, _t)
+                                            _cache[r["_row"]] = (review_shot_load(_sws, _srow)
+                                                                 if _sws is not None else None)
+                                    _img = _cache.get(r["_row"])
+                                    if _img is not None:
+                                        st.image(_img, width=300)
+                                    else:
+                                        st.caption("找不到這筆的原始截圖（當時可能沒勾「保存截圖」，"
+                                                   "或截圖存在別的帳號名下）。")
+                                    if st.button("收合截圖", key=f"dm_shothide_{r['_row']}",
+                                                 use_container_width=True):
+                                        st.session_state.pop(_shk, None)
+                                        st.rerun()
+
+    # ==========================================
+    # 📚 客服問題分類庫（獨立導航頁）：搜尋 → 複製範本；新增／匯入／管理分類都收在下方折疊區
+    # ==========================================
+    elif menu == "問題分類庫":
+        st.markdown("""
+        <div class="main-title-box">
+            <div class="main-title-text">✦ 客服問題分類庫 ✦</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        try:
+            qa_ws, qa_rows = qa_load(doc)
+        except Exception as e:
+            qa_ws, qa_rows = None, []
+            st.error(f"讀取問題庫失敗：{e}")
+
+        if qa_ws is not None:
+            qa_cats, qa_cfg_ws = qa_cats_load(doc)
+            _used = sorted({(r["分類"] or "").strip() for r in qa_rows if (r["分類"] or "").strip()})
+            all_cats = qa_cats + [c for c in _used if c not in qa_cats]   # 舊資料用過的分類也要留著
+
+            def _cat_picker(pfx, current=""):
+                """分類選單：清單裡挑，或選最後一項自己打新的。回傳最後決定的分類字串。"""
+                opts = all_cats + ["➕ 自己打新分類"]
+                idx = opts.index(current) if current in opts else (len(opts) - 1 if current else 0)
+                sel = st.selectbox("分類", opts, index=idx, key=f"{pfx}_sel")
+                if sel.startswith("➕"):
+                    return st.text_input("新分類名稱", value=("" if current in all_cats else current),
+                                         key=f"{pfx}_newcat", placeholder="例如 包裝破損").strip()
+                return sel
+
+            # 🔍 搜尋（這頁的主角，放最上面）
+            c_s, c_f = st.columns([2, 1])
+            kw = c_s.text_input("搜尋", key="qa_kw", label_visibility="collapsed",
+                                placeholder="🔍 打客人問的關鍵字，例如 退貨、物流、幾天到")
+            pick = c_f.selectbox("分類篩選", ["全部"] + all_cats, key="qa_filter",
+                                 label_visibility="collapsed")
+
+            def _qa_match(r):
+                if pick != "全部" and (r["分類"] or "").strip() != pick:
+                    return False
+                kws = (kw or "").lower().split()
+                if kws:
+                    blob = " ".join([r["分類"], r["問題標題"], r["客戶問題範例"],
+                                     r["建議回覆範本"], r["關鍵字"]]).lower()
+                    return all(t in blob for t in kws)
+                return True
+
+            shown = [r for r in qa_rows if _qa_match(r)]
+            shown.sort(key=lambda r: r.get("更新時間", ""), reverse=True)
+            st.caption(f"共 {len(qa_rows)} 筆，符合條件 {len(shown)} 筆")
+
+            if not qa_rows:
+                st.info("問題庫還是空的。往下用「➕ 新增問題範本」建一筆，"
+                        "或用「📥 從蝦皮客服對話批次匯入」讓 AI 幫你整理。")
+            elif not shown:
+                st.info("找不到符合的範本，換個關鍵字或把分類切回「全部」。")
+
+            for r in shown:
+                with st.container(border=True):
+                    if st.session_state.get("qa_edit") == r["_row"]:
+                        # ✏️ 編輯模式
+                        ecat = _cat_picker(f"qa_e_cat_{r['_row']}", r["分類"].strip())
+                        etitle = st.text_input("問題標題", key=f"qa_e_title_{r['_row']}")
+                        eq = st.text_area("客戶問題範例", key=f"qa_e_q_{r['_row']}", height=80)
+                        ereply = st.text_area("建議回覆範本", key=f"qa_e_reply_{r['_row']}", height=300)
+                        ekw = st.text_input("關鍵字（空格分隔）", key=f"qa_e_kw_{r['_row']}")
+                        e_img = st.file_uploader("📷 客戶問題截圖（選填，AI 會一起讀）",
+                                                 type=["png", "jpg", "jpeg"], key=f"qa_e_img_{r['_row']}")
+                        b1, b2, b3 = st.columns(3)
+                        if b1.button("💾 儲存", key=f"qa_e_save_{r['_row']}", type="primary",
+                                     use_container_width=True):
+                            rec = {"ID": r["ID"] or datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                                   "分類": ecat.strip(), "問題標題": etitle.strip(),
+                                   "客戶問題範例": eq.strip(), "建議回覆範本": ereply.strip(),
+                                   "關鍵字": ekw.strip(),
+                                   "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                            try:
+                                qa_update(qa_ws, r["_row"], rec)
+                                st.session_state.pop("qa_edit", None)
+                                st.success("已更新 ✅")
                                 st.rerun()
-                        elif _limit > 15:
-                            if st.button("⬆️ 收合回 15 筆", key="dm_less", use_container_width=True):
-                                st.session_state["dm_limit"] = 15
+                            except Exception as e:
+                                st.error(f"更新失敗：{e}")
+                        if b2.button("🤖 AI 重寫回覆", key=f"qa_e_ai_{r['_row']}", use_container_width=True):
+                            _eimg = _pil_from_upload(e_img)
+                            if not api_key:
+                                st.warning("尚未設定 API 金鑰。")
+                            elif not (eq.strip() or _eimg is not None):
+                                st.warning("請先填客戶問題範例或上傳截圖。")
+                            else:
+                                with st.spinner("AI 生成中…"):
+                                    out, usage = qa_ai_suggest(
+                                        api_key, ecat, eq,
+                                        model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                        image=_eimg)
+                                ai_track_cost(usage)
+                                if out:
+                                    st.session_state[f"qa_e_reply_{r['_row']}"] = out
+                                    st.rerun()
+                                else:
+                                    st.error("AI 生成失敗。")
+                        if b3.button("✖ 取消", key=f"qa_e_cancel_{r['_row']}", use_container_width=True):
+                            st.session_state.pop("qa_edit", None)
+                            st.rerun()
+                    else:
+                        # 👁️ 檢視模式：標題＋分類標籤＋可複製的完整範本
+                        tag = f"`{r['分類']}`　" if (r["分類"] or "").strip() else ""
+                        st.markdown(f"#### {tag}{r['問題標題'] or '（未命名問題）'}")
+                        if (r["客戶問題範例"] or "").strip():
+                            st.markdown(f"<div style='color:#798571; margin-bottom:6px;'>💬 "
+                                        f"{r['客戶問題範例']}</div>", unsafe_allow_html=True)
+                        if (r["建議回覆範本"] or "").strip():
+                            st.code(r["建議回覆範本"], language="text")
+                        _c1, _c2, _c3 = st.columns([2, 1, 1])
+                        _meta = " · ".join([x for x in [(r["關鍵字"] or "").strip(),
+                                                        (r["更新時間"] or "").strip()] if x])
+                        if _meta:
+                            _c1.caption(_meta)
+                        if _c2.button("✏️ 編輯", key=f"qa_edit_btn_{r['_row']}", use_container_width=True):
+                            st.session_state.qa_edit = r["_row"]
+                            st.session_state[f"qa_e_title_{r['_row']}"] = r["問題標題"]
+                            st.session_state[f"qa_e_q_{r['_row']}"] = r["客戶問題範例"]
+                            st.session_state[f"qa_e_reply_{r['_row']}"] = r["建議回覆範本"]
+                            st.session_state[f"qa_e_kw_{r['_row']}"] = r["關鍵字"]
+                            st.rerun()
+                        if st.session_state.get("qa_del") == r["_row"]:
+                            st.warning("確定要刪除這筆範本嗎？刪了無法復原。")
+                            d1, d2 = st.columns(2)
+                            if d1.button("🗑️ 確定刪除", key=f"qa_del_yes_{r['_row']}",
+                                         use_container_width=True):
+                                try:
+                                    qa_delete(qa_ws, r["_row"])
+                                    st.session_state.pop("qa_del", None)
+                                    st.success("已刪除 ✅")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"刪除失敗：{e}")
+                            if d2.button("取消", key=f"qa_del_no_{r['_row']}", use_container_width=True):
+                                st.session_state.pop("qa_del", None)
                                 st.rerun()
+                        else:
+                            if _c3.button("🗑️ 刪除", key=f"qa_del_btn_{r['_row']}", use_container_width=True):
+                                st.session_state.qa_del = r["_row"]
+                                st.rerun()
+
+            st.divider()
+
+            # ➕ 新增問題範本
+            with st.expander("➕ 新增問題範本", expanded=not qa_rows):
+                _ncat = _cat_picker("qa_new_cat")
+                st.text_input("問題標題", key="qa_new_title", placeholder="例如 包裹遲遲未到")
+                st.text_area("客戶問題範例", key="qa_new_q", height=80,
+                             placeholder="客人實際會怎麼問（也是 AI 生成的依據；可只上傳截圖）")
+                qa_new_img = st.file_uploader("📷 客戶問題截圖（選填，AI 會一起讀圖內容）",
+                                              type=["png", "jpg", "jpeg"], key="qa_new_img")
+                if st.button("🤖 用 AI 生成建議回覆", key="qa_new_ai", use_container_width=True):
+                    _img = _pil_from_upload(qa_new_img)
+                    if not api_key:
+                        st.warning("尚未設定 API 金鑰，無法使用 AI。")
+                    elif not (st.session_state.get("qa_new_q", "").strip() or _img is not None):
+                        st.warning("請先填「客戶問題範例」或上傳截圖，AI 才知道要回什麼。")
+                    else:
+                        with st.spinner("AI 生成中…"):
+                            out, usage = qa_ai_suggest(
+                                api_key, _ncat, st.session_state.get("qa_new_q", ""),
+                                model=st.session_state.get("qa_model", GEMINI_DEFAULT), image=_img)
+                        ai_track_cost(usage)
+                        if out:
+                            st.session_state["qa_new_reply"] = out
+                            st.rerun()
+                        else:
+                            st.error("AI 生成失敗，請稍後再試。")
+                st.text_area("建議回覆範本（可直接編輯）", key="qa_new_reply", height=300,
+                             placeholder="可手動輸入，或按上方按鈕讓 AI 生成後再微調")
+                st.text_input("關鍵字（用空格分隔，方便日後搜尋）", key="qa_new_kw",
+                              placeholder="例如 退貨 七天 鑑賞期")
+                if st.button("💾 儲存到問題庫", key="qa_new_save", type="primary", use_container_width=True):
+                    _title = st.session_state.get("qa_new_title", "").strip()
+                    _q = st.session_state.get("qa_new_q", "").strip()
+                    if not (_title or _q):
+                        st.warning("至少要填「問題標題」或「客戶問題範例」其中一項。")
+                    else:
+                        rec = {"ID": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                               "分類": _ncat.strip(), "問題標題": _title, "客戶問題範例": _q,
+                               "建議回覆範本": st.session_state.get("qa_new_reply", "").strip(),
+                               "關鍵字": st.session_state.get("qa_new_kw", "").strip(),
+                               "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                        try:
+                            qa_add(qa_ws, rec)
+                            for k in ["qa_new_title", "qa_new_q", "qa_new_reply", "qa_new_kw"]:
+                                st.session_state.pop(k, None)
+                            st.success("已新增到問題庫 ✅")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"儲存失敗：{e}")
+
+            # 📥 從蝦皮客服對話批次匯入
+            with st.expander("📥 從蝦皮客服對話批次匯入（AI 自動分類）", expanded=False):
+                st.caption("把蝦皮聊聊的對話整段貼進來（或上傳對話截圖），AI 會拆成「一個問題一筆」，"
+                           "回覆以你當時實際回過的內容為準做潤飾，個資會自動拿掉。")
+                imp_text = st.text_area("貼上蝦皮客服對話", key="qa_imp_text", height=170,
+                                        placeholder="客人：請問這個發貨要幾天？\n我：您好～目前備貨約 1-2 個工作天…")
+                imp_imgs = st.file_uploader("📷 或上傳對話截圖（可多張）", type=["png", "jpg", "jpeg"],
+                                            accept_multiple_files=True, key="qa_imp_imgs")
+                imp_hint = st.text_input("補充說明（選填，例如：這是同一位客人的退貨案）", key="qa_imp_hint")
+                if st.button("🤖 分析並整理成問題範本", key="qa_imp_run", use_container_width=True):
+                    _imgs = [i for i in [_pil_from_upload(f) for f in (imp_imgs or [])] if i is not None]
+                    if not api_key:
+                        st.warning("尚未設定 API 金鑰，無法使用 AI。")
+                    elif not ((imp_text or "").strip() or _imgs):
+                        st.warning("請先貼上對話內容或上傳截圖。")
+                    else:
+                        with st.spinner("AI 整理中…（對話越長越久，請稍候）"):
+                            items, usage = qa_ai_from_chat(
+                                api_key, imp_text, model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                images=_imgs, hint=imp_hint or "")
+                        ai_track_cost(usage)
+                        if items:
+                            st.session_state["qa_imp_items"] = items
+                            for k in [k for k in list(st.session_state.keys()) if str(k).startswith("qa_ip_")]:
+                                st.session_state.pop(k, None)
+                            st.rerun()
+                        else:
+                            st.error("AI 沒有整理出結果（可能對話太短或格式看不懂），可以再貼一次或改用截圖試試。")
+
+                _imp_items = st.session_state.get("qa_imp_items") or []
+                if _imp_items:
+                    _exist_titles = {(r["問題標題"] or "").strip() for r in qa_rows}
+                    st.success(f"AI 整理出 {len(_imp_items)} 筆，確認內容後再存入（可直接修改）：")
+                    for _i, _it in enumerate(_imp_items):
+                        _dup = _it["問題標題"].strip() != "" and _it["問題標題"].strip() in _exist_titles
+                        st.session_state.setdefault(f"qa_ip_use_{_i}", not _dup)
+                        for _f, _k in (("分類", "cat"), ("問題標題", "title"), ("客戶問題範例", "q"),
+                                       ("建議回覆範本", "reply"), ("關鍵字", "kw")):
+                            st.session_state.setdefault(f"qa_ip_{_k}_{_i}", _it[_f])
+                        with st.container(border=True):
+                            st.checkbox(f"{'⚠️ 問題庫已有同名範本：' if _dup else ''}"
+                                        f"{_it['問題標題'] or '（未命名）'}", key=f"qa_ip_use_{_i}")
+                            p1, p2 = st.columns([1, 2])
+                            p1.text_input("分類", key=f"qa_ip_cat_{_i}")
+                            p2.text_input("問題標題", key=f"qa_ip_title_{_i}")
+                            st.text_area("客戶問題範例", key=f"qa_ip_q_{_i}", height=70)
+                            st.text_area("建議回覆範本", key=f"qa_ip_reply_{_i}", height=260)
+                            st.text_input("關鍵字", key=f"qa_ip_kw_{_i}")
+                    v1, v2 = st.columns(2)
+                    if v1.button("💾 把勾選的存進問題庫", key="qa_imp_save", type="primary",
+                                 use_container_width=True):
+                        _new = []
+                        for _i in range(len(_imp_items)):
+                            if not st.session_state.get(f"qa_ip_use_{_i}"):
+                                continue
+                            _ti = st.session_state.get(f"qa_ip_title_{_i}", "").strip()
+                            _qi = st.session_state.get(f"qa_ip_q_{_i}", "").strip()
+                            if not (_ti or _qi):
+                                continue
+                            _new.append([datetime.now().strftime("%Y%m%d%H%M%S%f") + str(_i),
+                                         st.session_state.get(f"qa_ip_cat_{_i}", "").strip(), _ti, _qi,
+                                         st.session_state.get(f"qa_ip_reply_{_i}", "").strip(),
+                                         st.session_state.get(f"qa_ip_kw_{_i}", "").strip(),
+                                         datetime.now().strftime("%Y-%m-%d %H:%M")])
+                        if not _new:
+                            st.warning("沒有勾選任何一筆（或勾選的都沒填標題／問題）。")
+                        else:
+                            try:
+                                qa_ws.append_rows(_new, value_input_option="RAW")
+                                st.session_state.pop("qa_imp_items", None)
+                                st.session_state.pop("qa_imp_text", None)
+                                for _k in [k for k in list(st.session_state.keys())
+                                           if str(k).startswith("qa_ip_")]:
+                                    st.session_state.pop(_k, None)
+                                st.success(f"已存入 {len(_new)} 筆 ✅")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"存入失敗：{e}")
+                    if v2.button("✖ 丟掉這批結果", key="qa_imp_drop", use_container_width=True):
+                        st.session_state.pop("qa_imp_items", None)
+                        for _k in [k for k in list(st.session_state.keys()) if str(k).startswith("qa_ip_")]:
+                            st.session_state.pop(_k, None)
+                        st.rerun()
+
+            # ⚙️ 管理分類：一行一個，想加想改想刪都在這裡
+            with st.expander("⚙️ 管理分類（想加、想改名、想刪都在這）", expanded=False):
+                st.caption("一行一個分類，改完按儲存。已經用到這個分類的舊資料不會被改動，"
+                           "所以改名後舊資料仍會保留原本的分類名（會自動出現在選單裡）。")
+                # 🔑 這個框用「代次 nonce」當 key：存檔後換一把 key 重建，框裡才會顯示存好的內容。
+                #    （不可以在元件建立後才去改它的 session_state，Streamlit 會直接報錯。）
+                _cn = int(st.session_state.get("qa_cats_nonce", 0))
+                _cats_txt = st.text_area("分類清單", value="\n".join(qa_cats), height=210,
+                                         key=f"qa_cats_txt_{_cn}")
+                g1, g2 = st.columns(2)
+                if g1.button("💾 儲存分類", key="qa_cats_save", type="primary", use_container_width=True):
+                    if qa_cfg_ws is None:
+                        st.error("連不上「系統設定」分頁，無法儲存。")
+                    else:
+                        try:
+                            _saved = qa_cats_save(qa_cfg_ws, (_cats_txt or "").split("\n"))
+                            st.session_state["qa_cats_nonce"] = _cn + 1
+                            st.success(f"已儲存 {len(_saved)} 個分類 ✅")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"儲存失敗：{e}")
+                if g2.button("↩ 回到預設分類", key="qa_cats_reset", use_container_width=True):
+                    if qa_cfg_ws is None:
+                        st.error("連不上「系統設定」分頁，無法儲存。")
+                    else:
+                        try:
+                            qa_cats_save(qa_cfg_ws, QA_DEFAULT_CATS)
+                            st.session_state["qa_cats_nonce"] = _cn + 1
+                            st.success("已還原成預設分類 ✅")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"還原失敗：{e}")
+
+            # 🤖 AI 設定（不常動，收在最後，不要一開頁就一大排）
+            with st.expander("🤖 AI 模型與花費（預設免費款）", expanded=False):
+                _mkeys = list(GEMINI_PRICES.keys())
+                st.selectbox("AI 模型", _mkeys, index=_mkeys.index(GEMINI_DEFAULT),
+                             format_func=lambda k: GEMINI_PRICES[k]["label"], key="qa_model",
+                             help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")
+                ai_render_cost(st.session_state.get("qa_model", GEMINI_DEFAULT))
 
     # ==========================================
     # ✨ 動態文字壓印版：折價券管理

@@ -14,6 +14,7 @@ import threading
 import calendar
 import re
 import math
+import json
 
 # 點圖定位元件（沒裝成功就自動退回拉桿，不影響其他功能）
 try:
@@ -127,6 +128,29 @@ if not api_key or not sheet_url:
 # ==========================================
 st.set_page_config(page_title="BearJoy 智能客服", page_icon="✦", layout="wide")
 
+# 🔒 登入鎖：雲端有設定 app_password 才啟用（本機無 secrets → 自動略過，方便自己電腦用）
+#    沒通過密碼前 st.stop()，整個 App（含側欄、客戶名單）都不會載入。
+def _require_login():
+    try:
+        need = st.secrets.get("app_password", "")
+    except Exception:
+        need = ""
+    if not need or st.session_state.get("_authed"):
+        return
+    st.markdown("### 🔒 BearJoy 智能客服系統")
+    st.caption("請輸入密碼以進入")
+    with st.form("_login_form"):
+        pw = st.text_input("登入密碼", type="password", label_visibility="collapsed")
+        if st.form_submit_button("登入"):
+            if pw == need:
+                st.session_state["_authed"] = True
+                st.rerun()
+            else:
+                st.error("密碼錯誤，請再試一次")
+    st.stop()
+
+_require_login()
+
 st.markdown("""
 <style>
     .stApp { background-color: #FAF8F5; }
@@ -195,6 +219,21 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) > div[data-testid="column"]:last-child {
         margin-left: -10px !important;
     }
+    /* ✨ 折價券文字「微調鍵」：手機不用拖曳也能移動／縮放／旋轉（拖曳把手太小很難按） */
+    div[data-testid="stHorizontalBlock"]:has(.nudge-row) {
+        gap: 6px !important; flex-wrap: nowrap !important; align-items: center !important;
+        margin-bottom: 4px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.nudge-row) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 0 !important; min-width: 0 !important; padding: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.nudge-row) div.stButton > button {
+        height: 50px !important; min-height: 50px !important;
+        font-size: 19px !important; font-weight: bold !important;
+        padding: 0 !important; border-radius: 10px !important;
+        background: #A38F5A !important; white-space: nowrap !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.nudge-row) div.stButton > button:hover { background: #8E7C4C !important; }
 
     .main-title-box {
         background: #EFEBE2;
@@ -644,8 +683,293 @@ def _strip_md(text):
     s = re.sub(r'^\s*[-•*]\s+', '', s, flags=re.M)
     return s.strip()
 
-# 顧客評價原圖要備份到的 Google Drive 資料夾（需先把此資料夾分享給服務帳號 client_email）
+# ==========================================
+# 📚 客服問題分類庫：可分類、編輯、搜尋，並用 API 生成可直接複製的建議回覆範本
+#    資料存在雲端 Google Sheet「客服問題庫」分頁，手機／電腦都能即時查看與編輯。
+# ==========================================
+QA_SHEET = "客服問題庫"
+QA_COLS = ["ID", "分類", "問題標題", "客戶問題範例", "建議回覆範本", "關鍵字", "更新時間"]
+
+def qa_load(doc):
+    """讀取客服問題庫；空表自動補表頭。回傳 (ws, list[dict])，每筆含 _row 實際列號供更新/刪除。"""
+    ws = get_or_create_ws(doc, QA_SHEET)
+    values = ws.get_all_values()
+    # ⚠️ gspread 新建空白表的 get_all_values() 會回傳 [[]]（非 []），第一列也可能全空 →
+    #    都視為「還沒有表頭」，補上表頭再回傳空清單，避免第一筆資料被塞到第 1 列造成錯位。
+    if not values or not any((c or "").strip() for c in values[0]):
+        ws.append_row(QA_COLS, value_input_option="RAW")
+        return ws, []
+    header = values[0]
+    rows = []
+    for i, r in enumerate(values[1:], start=2):
+        if not any((c or "").strip() for c in r):  # 跳過全空列
+            continue
+        d = {col: (r[j] if j < len(r) else "") for j, col in enumerate(header)}
+        rec = {c: d.get(c, "") for c in QA_COLS}
+        rec["_row"] = i
+        rows.append(rec)
+    return ws, rows
+
+def qa_add(ws, rec):
+    ws.append_row([rec.get(c, "") for c in QA_COLS], value_input_option="RAW")
+
+def qa_update(ws, row, rec):
+    # gspread 6.x：values 為第一參數，這裡一律用關鍵字避免版本差異
+    ws.update(values=[[rec.get(c, "") for c in QA_COLS]], range_name=f"A{row}:G{row}",
+              value_input_option="RAW")
+
+def qa_delete(ws, row):
+    ws.delete_rows(row)
+
+# 🤖 Gemini 模型清單與計價（每 100 萬 tokens 美金 in/out；free=免費額度可用，預設選免費）
+#    報價依 Google 官方（2026/06）：3 Flash、3.1 Flash-Lite、2.5 Flash 系列有免費額度（額度縮減）；
+#    Pro 系列 2026-04 起取消免費額度、純付費。未來新模型在此增修即可。
+#    ids：同一款的候選 API 代號（preview→正式可能改名），呼叫時依序嘗試，避免改版就失效。
+GEMINI_PRICES = {
+    "gemini-2.5-flash":      {"label": "2.5 Flash ｜免費額度・預設穩定", "in": 0.30, "out": 2.50, "free": True,
+                              "ids": ["gemini-2.5-flash"]},
+    "gemini-2.5-flash-lite": {"label": "2.5 Flash-Lite ｜免費額度・便宜快", "in": 0.10, "out": 0.40, "free": True,
+                              "ids": ["gemini-2.5-flash-lite"]},
+    "gemini-3-flash":        {"label": "3 Flash ｜最新（需帳號已開放）", "in": 0.50, "out": 3.00, "free": True,
+                              "ids": ["gemini-3-flash", "gemini-3-flash-preview"]},
+    "gemini-3.1-flash-lite": {"label": "3.1 Flash-Lite ｜最新最省（需帳號已開放）", "in": 0.25, "out": 1.50, "free": True,
+                              "ids": ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview"]},
+    "gemini-2.5-pro":        {"label": "2.5 Pro ｜付費・最聰明", "in": 1.25, "out": 10.0, "free": False,
+                              "ids": ["gemini-2.5-pro"]},
+}
+GEMINI_DEFAULT = "gemini-2.5-flash"  # 預設用「確定可用」的免費款；3 系列保留可手動選
+GEMINI_SAFE_FALLBACK = "gemini-2.5-flash"  # 選的模型整個打不通時的最後保險（已知穩定免費）
+
+def _pil_from_upload(uploaded):
+    """把 Streamlit file_uploader 的上傳檔轉成 PIL Image（給多模態 API 讀截圖）；失敗回 None。"""
+    if uploaded is None:
+        return None
+    try:
+        uploaded.seek(0)
+        return Image.open(uploaded).convert("RGB")
+    except Exception:
+        return None
+
+def gemini_call_costed(api_key, contents, model):
+    """呼叫指定 Gemini 模型，回傳 (text, usage)。
+    usage = {model, in, out, cost(美金估算), free}。可重複用在任何需要 API 的功能。
+    contents 可為 [文字]，或 [文字, PIL圖片]（多模態，讀截圖）。失敗回 (None, usage_or_None)。"""
+    try:
+        client = genai.Client(api_key=api_key)
+    except Exception:
+        return None, None
+    # 先試指定模型的候選代號；整款都打不通時，最後退回已知穩定的免費款，確保仍生成得出來。
+    order = [model] + ([GEMINI_SAFE_FALLBACK] if model != GEMINI_SAFE_FALLBACK else [])
+    resp, used = None, model
+    first = True
+    for mkey in order:
+        price = GEMINI_PRICES.get(mkey, {"in": 0.0, "out": 0.0, "free": True, "ids": [mkey]})
+        for mid in price.get("ids", [mkey]):   # 候選代號（preview/正式改名也不會壞）
+            for attempt in range(2):            # 每代號重試 1 次，免費版偶發流量限制時退避再試
+                try:
+                    if not first:
+                        time.sleep(2 + attempt * 2)
+                    first = False
+                    resp = client.models.generate_content(model=mid, contents=contents)
+                    used = mkey
+                    break
+                except Exception:
+                    resp = None
+                    continue
+            if resp is not None:
+                break
+        if resp is not None:
+            break
+    if resp is None:
+        return None, None
+    price = GEMINI_PRICES.get(used, {"in": 0.0, "out": 0.0, "free": True})
+    um = getattr(resp, "usage_metadata", None)
+    pin = getattr(um, "prompt_token_count", 0) or 0
+    pout = getattr(um, "candidates_token_count", 0) or 0
+    cost = pin / 1_000_000 * price["in"] + pout / 1_000_000 * price["out"]
+    usage = {"model": used, "in": pin, "out": pout, "cost": cost,
+             "free": price.get("free", True), "fellback": used != model}
+    try:
+        return resp.text, usage
+    except Exception:
+        return None, usage
+
+def qa_ai_suggest(api_key, category, question, model=GEMINI_DEFAULT, image=None):
+    """依客戶問題（文字＋可選截圖）＋分類，用 Gemini 生成 BearJoy Sharon 語氣、可直接複製的建議回覆。
+    回傳 (回覆文字 or None, usage)。"""
+    q = (question or "").strip()
+    if image is not None and not q:
+        qline = "【客戶問題】請先辨識下方附上的截圖中，客人提出的問題與需求，再回覆。"
+    elif image is not None and q:
+        qline = f"【客戶問題】{q}\n（另附客人對話截圖，請一併參考圖中細節）"
+    else:
+        qline = f"【客戶問題】{q}"
+    prompt = f"""你是蝦皮賣場 BearJoy 的客服主管 Sharon。請針對下方客戶問題，寫一則可以直接複製貼給客人的回覆。
+【語氣】溫暖、專業、貼心，適度使用 Emoji，分段換行、版面清爽。
+【長度】約 3～6 行，務必精簡，不要長篇大論。
+【結尾】最後一行署名：—— BearJoy Sharon
+【問題分類】{category or '一般客服'}
+{qline}
+
+請「只」輸出回覆內容本身，不要加任何說明、標題或引號。"""
+    contents = [prompt, image] if image is not None else [prompt]
+    text, usage = gemini_call_costed(api_key, contents, model)
+    if not text:
+        return None, usage
+    return _strip_md(text).strip(), usage
+
+def _json_list_from_text(text):
+    """從 AI 回覆中取出 JSON 陣列（容忍 ```json 圍欄、前後多餘說明）。失敗回 []。"""
+    if not text:
+        return []
+    s = str(text).strip()
+    s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+    s = re.sub(r"\s*```$", "", s).strip()
+    if not s.startswith("["):
+        i, j = s.find("["), s.rfind("]")
+        if i == -1 or j == -1 or j < i:
+            return []
+        s = s[i:j + 1]
+    try:
+        data = json.loads(s)
+    except Exception:
+        return []
+    return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+
+def qa_ai_from_chat(api_key, chat_text, model=GEMINI_DEFAULT, images=None, hint=""):
+    """把一段蝦皮客服對話（貼上的文字，或多張對話截圖）整理成問題庫格式的「多筆」範本。
+    重點：建議回覆以「你實際回過的內容」為準，只做潤飾，不憑空編造承諾（退款、免運等）。
+    回傳 (list[dict]，欄位同 QA_COLS 的前五項, usage)。"""
+    txt = (chat_text or "").strip()
+    imgs = [im for im in (images or []) if im is not None]
+    if not txt and not imgs:
+        return [], None
+    prompt = f"""你是蝦皮賣場 BearJoy 的客服主管 Sharon 的助理。下面是我和客人的客服對話紀錄（可能是文字，也可能是對話截圖）。
+請把對話拆解成「一個問題一筆」的客服範本，之後我要靠關鍵字搜尋叫出來直接複製貼給客人。
+
+【規則】
+1. 一則對話若含多個不同問題，就拆成多筆；同一個問題重複出現只留一筆。
+2. 「建議回覆範本」以我實際回覆過的內容為準，只做語句潤飾與去識別化，**不可以自己編造沒發生過的承諾**（例如退款金額、免運、贈品）。
+3. 若對話中我還沒有回覆，才由你依 BearJoy 溫暖專業的語氣補一則合適回覆。
+4. 移除客人姓名、電話、地址、訂單編號等個資，改成「您」或〔訂單編號〕之類的佔位字。
+5. 「分類」用簡短通用詞，例如：物流、退換貨、商品規格、付款、折價券、售後保固、其他。
+6. 「關鍵字」給 3～6 個客人可能會打的字，用空格分隔。
+{('7. 額外提示：' + hint.strip()) if hint.strip() else ''}
+
+【輸出格式】只輸出一個 JSON 陣列，不要任何說明文字或程式碼圍欄。每個元素長這樣：
+{{"分類":"物流","問題標題":"包裹遲遲未更新","客戶問題範例":"下單三天了物流都沒動…","建議回覆範本":"（可直接貼給客人的完整回覆）","關鍵字":"物流 未更新 出貨"}}
+
+【對話紀錄】
+{txt if txt else '（見附上的對話截圖）'}"""
+    contents = [prompt] + imgs
+    text, usage = gemini_call_costed(api_key, contents, model)
+    items = []
+    for d in _json_list_from_text(text):
+        items.append({
+            "分類": str(d.get("分類", "") or "").strip(),
+            "問題標題": str(d.get("問題標題", "") or "").strip(),
+            "客戶問題範例": str(d.get("客戶問題範例", "") or "").strip(),
+            "建議回覆範本": str(d.get("建議回覆範本", "") or "").strip(),
+            "關鍵字": str(d.get("關鍵字", "") or "").strip(),
+        })
+    return [it for it in items if it["問題標題"] or it["客戶問題範例"]], usage
+
+# ==========================================
+# 💌 私訊待辦：公開回覆先發、私訊之後有空再回，這裡把已產出的私訊回覆存著隨時叫出來
+#    直接用原本的「回覆紀錄」分頁，只在後面多兩欄狀態，不動既有五欄資料。
+# ==========================================
+DM_SHEET = "回覆紀錄"
+DM_BASE_COLS = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"]
+DM_STATUS_COL = "私訊狀態"
+DM_TIME_COL = "私訊完成時間"
+DM_DONE = "已私訊"
+
+def _a1_col(n):
+    """1 → A、27 → AA（寫表頭範圍用）。"""
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+def dm_load(doc):
+    """讀「回覆紀錄」；缺「私訊狀態／私訊完成時間」兩欄就補表頭（只加欄、不動既有資料）。
+    回傳 (ws, rows, col_idx)；rows 由新到舊排序，每筆含 _row 實際列號供標記用。"""
+    ws = get_or_create_ws(doc, DM_SHEET)
+    values = ws.get_all_values()
+    header = list(values[0]) if values and any((c or "").strip() for c in values[0]) else []
+    if not header:
+        header = DM_BASE_COLS + [DM_STATUS_COL, DM_TIME_COL]
+        ws.update(values=[header], range_name=f"A1:{_a1_col(len(header))}1", value_input_option="RAW")
+        return ws, [], {c: i + 1 for i, c in enumerate(header)}
+    added = [c for c in (DM_STATUS_COL, DM_TIME_COL) if c not in header]
+    if added:
+        header = header + added
+        ws.update(values=[header], range_name=f"A1:{_a1_col(len(header))}1", value_input_option="RAW")
+    idx = {c: i + 1 for i, c in enumerate(header)}
+    rows = []
+    for i, r in enumerate(values[1:], start=2):
+        if not any((c or "").strip() for c in r):
+            continue
+        d = {c: (r[j] if j < len(r) else "") for j, c in enumerate(header)}
+        d["_row"] = i
+        rows.append(d)
+    rows.reverse()          # 最新的排最上面
+    return ws, rows, idx
+
+def dm_mark(ws, row, idx, done):
+    """標記／取消標記某一列的私訊狀態（只寫那兩格，不動其他欄位）。"""
+    ws.update_cell(row, idx[DM_STATUS_COL], DM_DONE if done else "")
+    ws.update_cell(row, idx[DM_TIME_COL], datetime.now().strftime("%Y-%m-%d %H:%M") if done else "")
+
+# 💰 全程式共用的花費累計（任何用到 API 的功能都呼叫這兩個，介面就有一致的費用顯示）
+def ai_track_cost(usage):
+    """把一次 API 用量累計進工作階段總花費，並記為最近一次。usage 為 gemini_call_costed 回傳的 dict。"""
+    if not usage:
+        return
+    st.session_state["ai_last_usage"] = usage
+    st.session_state["ai_cost_total"] = st.session_state.get("ai_cost_total", 0.0) + usage.get("cost", 0.0)
+
+def ai_render_cost(model_key=None):
+    """在目前位置畫出花費資訊：上次用量＋本次開啟累計（美金估算）。model_key 可順帶顯示目前模型。"""
+    last = st.session_state.get("ai_last_usage")
+    total = st.session_state.get("ai_cost_total", 0.0)
+    if last:
+        free = "（免費額度內，實際 $0）" if last.get("free") else "（付費模型，會實際扣費）"
+        used_lbl = GEMINI_PRICES.get(last.get("model", ""), {}).get("label", last.get("model", ""))
+        fb = "　⚠️ 你選的模型打不通，已自動改用此款" if last.get("fellback") else ""
+        st.caption(f"💰 上次生成（{used_lbl}）：輸入 {last['in']} ＋ 輸出 {last['out']} tokens"
+                   f"｜估算 US${last['cost']:.5f} {free}{fb}")
+    else:
+        st.caption("💰 上次生成：尚未使用 AI")
+    tail = f"　({GEMINI_PRICES[model_key]['label']})" if model_key in GEMINI_PRICES else ""
+    st.caption(f"📊 本次開啟累計估算：US${total:.5f}{tail}")
+
+# 顧客評價原圖要備份到的 Google Drive 資料夾
 DRIVE_FOLDER_ID = "1ZamXtEG9tiG6HTQJXTD6e_am6u3B4bGz"
+
+# ☁️ Drive 備份改走「Apps Script 中轉」：個人 Gmail 的服務帳號沒有儲存空間（會 403），
+#    改由使用者自己部署的 Apps Script 網頁應用程式，以「使用者本人身分」把圖存進 Drive。
+#    🔐 網址＋密碼不寫死在程式碼（避免公開 repo 外洩）：雲端讀 st.secrets、本機讀 drive_config.txt。
+def _load_drive_relay_cfg():
+    try:
+        u = st.secrets.get("apps_script_drive_url", "")
+        s = st.secrets.get("apps_script_drive_secret", "")
+        if u and s:
+            return u, s
+    except Exception:
+        pass
+    try:
+        p = os.path.join(os.path.dirname(__file__), "drive_config.txt")
+        if os.path.exists(p):
+            ls = open(p, encoding="utf-8").read().splitlines()
+            if len(ls) >= 2:
+                return ls[0].strip(), ls[1].strip()
+    except Exception:
+        pass
+    return "", ""
+
+APPS_SCRIPT_DRIVE_URL, APPS_SCRIPT_DRIVE_SECRET = _load_drive_relay_cfg()
 
 @st.cache_resource(show_spinner=False)
 def _drive_service():
@@ -676,18 +1000,25 @@ def section_block(emoji, title, desc=""):
     st.subheader(f"{emoji} {title}", help=(desc or None), anchor=False)
 
 def upload_img_to_drive(img, filename, folder_id=DRIVE_FOLDER_ID):
-    """把 PIL 圖片上傳到指定 Google Drive 資料夾；回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
+    """把 PIL 圖片透過 Apps Script 中轉，以使用者本人身分存進 Drive 資料夾；
+    回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
     try:
-        from googleapiclient.http import MediaIoBaseUpload
+        import requests
+        if not APPS_SCRIPT_DRIVE_URL:
+            return False, "尚未設定 Apps Script 中轉網址"
         buf = BytesIO()
         img.convert("RGB").save(buf, format="PNG")
-        buf.seek(0)
-        svc = _drive_service()
-        f = svc.files().create(
-            body={"name": filename, "parents": [folder_id]},
-            media_body=MediaIoBaseUpload(buf, mimetype="image/png", resumable=False),
-            fields="id, webViewLink", supportsAllDrives=True).execute()
-        return True, f.get("webViewLink")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        r = requests.post(APPS_SCRIPT_DRIVE_URL, json={
+            "secret": APPS_SCRIPT_DRIVE_SECRET,
+            "filename": filename,
+            "mimeType": "image/png",
+            "dataBase64": b64,
+        }, timeout=40)
+        data = r.json()
+        if data.get("ok"):
+            return True, data.get("url")
+        return False, data.get("err", "上傳失敗")
     except Exception as e:
         return False, str(e)
 
@@ -986,6 +1317,31 @@ def _stamp_coupon(base_img, text, color, size, cx, cy, rot):
     preview.alpha_composite(rl, (int(cx - rl.width / 2), int(cy - rl.height / 2)))
     return preview.convert("RGB"), tw, th
 
+def _parse_coupset(row):
+    """解析壓印記憶字串 x|y|size|rot|color|text（舊資料沒有最後的 text 也吃得下）。"""
+    if not (row and len(row) > 1):
+        return {}
+    p = str(row[1]).split("|")
+    try:
+        return {"x": int(float(p[0])), "y": int(float(p[1])),
+                "size": int(float(p[2])), "rot": int(float(p[3])),
+                "color": p[4] if len(p) > 4 else "#FFFFFF",
+                "text": p[5] if len(p) > 5 else ""}
+    except Exception:
+        return {}
+
+def _stamp_coupon_hq(base_img, text, color, size, cx, cy, rot, target=2160):
+    """高畫質輸出：先把乾淨底圖等比放大到長邊 target，再用「放大後的字級」重新渲染文字。
+    重點是文字為向量重繪、不是把 1080 成品硬拉大 → 文字邊緣真的更銳利（底圖本身則是插值放大）。"""
+    w, h = base_img.size
+    k = float(target) / max(w, h)
+    if k <= 1.01:                      # 底圖本來就夠大就不放大，避免無謂變胖
+        return _stamp_coupon(base_img, text, color, size, cx, cy, rot)[0]
+    big = base_img.convert("RGB").resize((int(round(w * k)), int(round(h * k))), Image.LANCZOS)
+    out, _, _ = _stamp_coupon(big, text, color, max(10, int(round(size * k))),
+                              int(round(cx * k)), int(round(cy * k)), rot)
+    return out
+
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -1074,7 +1430,8 @@ if doc:
         </div>
         """, unsafe_allow_html=True)
         
-        tab1, tab2, tab3 = st.tabs(["批次評價處理", "VIP 顧客管理", "好評洞察 / 素材"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["批次評價處理", "VIP 顧客管理", "好評洞察 / 素材",
+                                                "問題分類庫 / 範本", "私訊待辦"])
 
         with tab1:
             col_up, col_res = st.columns([1, 1.5], gap="large")
@@ -1091,9 +1448,8 @@ if doc:
                 save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
                                                  help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
                 save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=True,
-                                            help="把上傳的評價原圖存到指定 Drive 資料夾，檔名＝「日期 評價圖-規格」。"
-                                                 "註：個人 Gmail＋服務帳號因 Google 限制無法直接存（服務帳號無儲存空間），"
-                                                 "需改用 Apps Script 中轉才會成功；目前評價原圖已備份在「評價截圖素材」分頁。")
+                                            help="把上傳的評價原圖存進你的 Drive 資料夾（檔名＝「日期 評價圖-規格」），"
+                                                 "未來開資料夾就能直接挑素材。透過 Apps Script 以你本人身分存，會多花一點同步時間。")
                 # 🎁 功能1：回購優惠碼設定收進摺疊區，平時不佔版面、要用再展開
                 if "saved_repurchase" not in st.session_state:
                     try:
@@ -1118,7 +1474,15 @@ if doc:
                         except Exception as e:
                             st.error(f"儲存失敗：{e}")
 
-                st.markdown("##### ③ 開始處理")
+                st.markdown("##### ③ 選擇 AI 模型")
+                _bkeys = list(GEMINI_PRICES.keys())
+                batch_model = st.selectbox(
+                    "AI 模型", _bkeys, index=_bkeys.index(GEMINI_DEFAULT),
+                    format_func=lambda k: GEMINI_PRICES[k]["label"], key="batch_model",
+                    label_visibility="collapsed",
+                    help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")
+
+                st.markdown("##### ④ 開始處理")
                 start_btn = st.button("🚀 開始解析並同步", type="primary", use_container_width=True)
                 preview_area = st.container()
 
@@ -1185,7 +1549,10 @@ if doc:
                             # 重試/退避邏輯統一交給 gemini_generate()，不再每次嘗試前都空等 3 秒。
                             if file_idx > 0:
                                 time.sleep(4)
-                            res_text = gemini_generate(api_key, [current_prompt, img])
+                            res_text, _usage = gemini_call_costed(
+                                api_key, [current_prompt, img],
+                                st.session_state.get("batch_model", GEMINI_DEFAULT))
+                            ai_track_cost(_usage)
 
                             if not res_text:
                                 st.error(f"檔案 {file.name} 處理失敗。")
@@ -1231,6 +1598,10 @@ if doc:
                                     st.code(priv, language="text")
                             
                             results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv])
+
+                    # 💰 本批 AI 花費（本次開啟累計）顯示在結果區
+                    with cards_container:
+                        ai_render_cost(st.session_state.get("batch_model", GEMINI_DEFAULT))
 
                     if doc and results_to_cloud:
                         try:
@@ -1722,6 +2093,413 @@ if doc:
                     except Exception as e:
                         st.error(f"打包失敗：{e}")
 
+        # ==========================================
+        # 📚 Tab4：客服問題分類庫（分類 / 編輯 / 搜尋 / AI 建議回覆 / 一鍵複製範本）
+        # ==========================================
+        with tab4:
+            with st.container(border=True):
+                section_block("📚", "客服問題分類庫",
+                              "把常見客訴與提問分門別類存起來，下次遇到就「搜尋 → 複製範本」直接回覆客人。"
+                              "可隨時編輯，也能用 AI（可選模型、可上傳客戶截圖）幫你生成建議回覆。資料存雲端，手機電腦同步。")
+                if not doc:
+                    st.info("請先在左側完成連線，才能使用問題庫。")
+                else:
+                    try:
+                        qa_ws, qa_rows = qa_load(doc)
+                        qa_err = None
+                    except Exception as e:
+                        qa_ws, qa_rows, qa_err = None, [], e
+                        st.error(f"讀取問題庫失敗：{e}")
+
+                    if qa_ws is not None:
+                        cats = sorted({(r["分類"] or "").strip() for r in qa_rows if (r["分類"] or "").strip()})
+
+                        # 🤖 AI 模型選擇（預設免費款） + 💰 花費顯示（本次／累計）
+                        _mkeys = list(GEMINI_PRICES.keys())
+                        mc1, mc2 = st.columns([2, 3])
+                        sel_model = mc1.selectbox(
+                            "🤖 AI 模型", _mkeys,
+                            index=_mkeys.index(GEMINI_DEFAULT),
+                            format_func=lambda k: GEMINI_PRICES[k]["label"], key="qa_model",
+                            help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")
+                        with mc2:
+                            ai_render_cost(sel_model)
+
+                        # ➕ 新增問題範本（含 AI 生成建議回覆）
+                        with st.expander("➕ 新增問題範本", expanded=not qa_rows):
+                            a1, a2 = st.columns([1, 2])
+                            a1.text_input("分類", key="qa_new_cat",
+                                          placeholder="退換貨 / 物流 / 商品規格 / 折價券…")
+                            a2.text_input("問題標題", key="qa_new_title",
+                                          placeholder="例如 包裹遲遲未到")
+                            st.text_area("客戶問題範例", key="qa_new_q", height=80,
+                                         placeholder="客人實際會怎麼問（也是 AI 生成的依據；可只上傳截圖）")
+                            qa_new_img = st.file_uploader(
+                                "📷 上傳客戶問題截圖（選填，AI 會一起讀圖內容）",
+                                type=["png", "jpg", "jpeg"], key="qa_new_img")
+                            if st.button("🤖 用 AI 生成建議回覆", key="qa_new_ai", use_container_width=True):
+                                _img = _pil_from_upload(qa_new_img)
+                                if not api_key:
+                                    st.warning("尚未設定 API 金鑰，無法使用 AI。")
+                                elif not (st.session_state.get("qa_new_q", "").strip() or _img is not None):
+                                    st.warning("請先填「客戶問題範例」或上傳截圖，AI 才知道要回什麼。")
+                                else:
+                                    with st.spinner("AI 生成中…"):
+                                        out, usage = qa_ai_suggest(
+                                            api_key, st.session_state.get("qa_new_cat", ""),
+                                            st.session_state.get("qa_new_q", ""),
+                                            model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                            image=_img)
+                                    ai_track_cost(usage)
+                                    if out:
+                                        st.session_state["qa_new_reply"] = out
+                                        st.rerun()
+                                    else:
+                                        st.error("AI 生成失敗，請稍後再試。")
+                            st.text_area("建議回覆範本（可直接編輯）", key="qa_new_reply", height=160,
+                                         placeholder="可手動輸入，或按上方按鈕讓 AI 生成後再微調")
+                            st.text_input("關鍵字（用空格分隔，方便日後搜尋）", key="qa_new_kw",
+                                          placeholder="例如 退貨 七天 鑑賞期")
+                            if st.button("💾 儲存到問題庫", key="qa_new_save", type="primary",
+                                         use_container_width=True):
+                                _title = st.session_state.get("qa_new_title", "").strip()
+                                _q = st.session_state.get("qa_new_q", "").strip()
+                                if not (_title or _q):
+                                    st.warning("至少要填「問題標題」或「客戶問題範例」其中一項。")
+                                else:
+                                    rec = {"ID": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                                           "分類": st.session_state.get("qa_new_cat", "").strip(),
+                                           "問題標題": _title,
+                                           "客戶問題範例": _q,
+                                           "建議回覆範本": st.session_state.get("qa_new_reply", "").strip(),
+                                           "關鍵字": st.session_state.get("qa_new_kw", "").strip(),
+                                           "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                                    try:
+                                        qa_add(qa_ws, rec)
+                                        for k in ["qa_new_cat", "qa_new_title", "qa_new_q",
+                                                  "qa_new_reply", "qa_new_kw"]:
+                                            st.session_state.pop(k, None)
+                                        st.success("已新增到問題庫 ✅")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"儲存失敗：{e}")
+
+                        # 📥 從蝦皮客服對話批次匯入：貼上對話或上傳截圖 → AI 拆成一題一筆 → 挑選後存進問題庫
+                        with st.expander("📥 從蝦皮客服對話批次匯入（AI 自動分類）", expanded=False):
+                            st.caption("把蝦皮聊聊的對話整段貼進來（或直接上傳對話截圖），AI 會拆成「一個問題一筆」，"
+                                       "回覆以你當時實際回過的內容為準做潤飾，個資會自動拿掉。存進去之後就能用上面的搜尋叫出來複製。")
+                            imp_text = st.text_area("貼上蝦皮客服對話", key="qa_imp_text", height=170,
+                                                    placeholder="客人：請問這個發貨要幾天？\n我：您好～目前備貨約 1-2 個工作天…")
+                            imp_imgs = st.file_uploader("📷 或上傳對話截圖（可多張）", type=["png", "jpg", "jpeg"],
+                                                        accept_multiple_files=True, key="qa_imp_imgs")
+                            imp_hint = st.text_input("補充說明（選填，例如：這是同一位客人的退貨案）", key="qa_imp_hint")
+                            if st.button("🤖 分析並整理成問題範本", key="qa_imp_run", use_container_width=True):
+                                _imgs = [_pil_from_upload(f) for f in (imp_imgs or [])]
+                                _imgs = [i for i in _imgs if i is not None]
+                                if not api_key:
+                                    st.warning("尚未設定 API 金鑰，無法使用 AI。")
+                                elif not ((imp_text or "").strip() or _imgs):
+                                    st.warning("請先貼上對話內容或上傳截圖。")
+                                else:
+                                    with st.spinner("AI 整理中…（對話越長越久，請稍候）"):
+                                        items, usage = qa_ai_from_chat(
+                                            api_key, imp_text,
+                                            model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                            images=_imgs, hint=imp_hint or "")
+                                    ai_track_cost(usage)
+                                    if items:
+                                        st.session_state["qa_imp_items"] = items
+                                        # 清掉上一批的編輯暫存，避免新舊資料混在一起
+                                        for k in [k for k in list(st.session_state.keys())
+                                                  if str(k).startswith("qa_ip_")]:
+                                            st.session_state.pop(k, None)
+                                        st.rerun()
+                                    else:
+                                        st.error("AI 沒有整理出結果（可能對話太短或格式看不懂），"
+                                                 "可以再貼一次或改用截圖試試。")
+
+                            _imp_items = st.session_state.get("qa_imp_items") or []
+                            if _imp_items:
+                                _exist_titles = {(r["問題標題"] or "").strip() for r in qa_rows}
+                                st.success(f"AI 整理出 {len(_imp_items)} 筆，確認內容後再存入（可直接修改）：")
+                                for _i, _it in enumerate(_imp_items):
+                                    _dup = _it["問題標題"].strip() in _exist_titles and _it["問題標題"].strip() != ""
+                                    # 先把 AI 結果放進 session_state 當預設值，再建立元件（同時給 value 與 key 會跳警告）
+                                    st.session_state.setdefault(f"qa_ip_use_{_i}", not _dup)
+                                    for _f, _k in (("分類", "cat"), ("問題標題", "title"), ("客戶問題範例", "q"),
+                                                   ("建議回覆範本", "reply"), ("關鍵字", "kw")):
+                                        st.session_state.setdefault(f"qa_ip_{_k}_{_i}", _it[_f])
+                                    with st.container(border=True):
+                                        st.checkbox(
+                                            f"{'⚠️ 問題庫已有同名範本：' if _dup else ''}{_it['問題標題'] or '（未命名）'}",
+                                            key=f"qa_ip_use_{_i}")
+                                        p1, p2 = st.columns([1, 2])
+                                        p1.text_input("分類", key=f"qa_ip_cat_{_i}")
+                                        p2.text_input("問題標題", key=f"qa_ip_title_{_i}")
+                                        st.text_area("客戶問題範例", key=f"qa_ip_q_{_i}", height=70)
+                                        st.text_area("建議回覆範本", key=f"qa_ip_reply_{_i}", height=140)
+                                        st.text_input("關鍵字", key=f"qa_ip_kw_{_i}")
+                                v1, v2 = st.columns(2)
+                                if v1.button("💾 把勾選的存進問題庫", key="qa_imp_save", type="primary",
+                                             use_container_width=True):
+                                    _new = []
+                                    for _i in range(len(_imp_items)):
+                                        if not st.session_state.get(f"qa_ip_use_{_i}"):
+                                            continue
+                                        _ti = st.session_state.get(f"qa_ip_title_{_i}", "").strip()
+                                        _qi = st.session_state.get(f"qa_ip_q_{_i}", "").strip()
+                                        if not (_ti or _qi):
+                                            continue
+                                        _new.append([datetime.now().strftime("%Y%m%d%H%M%S%f") + str(_i),
+                                                     st.session_state.get(f"qa_ip_cat_{_i}", "").strip(),
+                                                     _ti, _qi,
+                                                     st.session_state.get(f"qa_ip_reply_{_i}", "").strip(),
+                                                     st.session_state.get(f"qa_ip_kw_{_i}", "").strip(),
+                                                     datetime.now().strftime("%Y-%m-%d %H:%M")])
+                                    if not _new:
+                                        st.warning("沒有勾選任何一筆（或勾選的都沒填標題／問題）。")
+                                    else:
+                                        try:
+                                            qa_ws.append_rows(_new, value_input_option="RAW")
+                                            st.session_state.pop("qa_imp_items", None)
+                                            st.session_state.pop("qa_imp_text", None)
+                                            for _k in [k for k in list(st.session_state.keys())
+                                                       if str(k).startswith("qa_ip_")]:
+                                                st.session_state.pop(_k, None)
+                                            st.success(f"已存入 {len(_new)} 筆 ✅")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"存入失敗：{e}")
+                                if v2.button("✖ 丟掉這批結果", key="qa_imp_drop", use_container_width=True):
+                                    st.session_state.pop("qa_imp_items", None)
+                                    for _k in [k for k in list(st.session_state.keys())
+                                               if str(k).startswith("qa_ip_")]:
+                                        st.session_state.pop(_k, None)
+                                    st.rerun()
+
+                        st.divider()
+
+                        # 🔍 搜尋 + 分類篩選
+                        c_s, c_f = st.columns([2, 1])
+                        kw = c_s.text_input("🔍 搜尋（標題 / 問題 / 回覆 / 關鍵字，可空格多關鍵字）", key="qa_kw")
+                        pick = c_f.selectbox("分類篩選", ["全部"] + cats, key="qa_filter")
+
+                        def _qa_match(r):
+                            if pick != "全部" and (r["分類"] or "").strip() != pick:
+                                return False
+                            kws = (kw or "").lower().split()
+                            if kws:
+                                blob = " ".join([r["分類"], r["問題標題"], r["客戶問題範例"],
+                                                 r["建議回覆範本"], r["關鍵字"]]).lower()
+                                return all(t in blob for t in kws)
+                            return True
+
+                        shown = [r for r in qa_rows if _qa_match(r)]
+                        # 最新更新的排最上面
+                        shown.sort(key=lambda r: r.get("更新時間", ""), reverse=True)
+                        st.caption(f"問題庫共 {len(qa_rows)} 筆，符合條件 {len(shown)} 筆")
+
+                        if not qa_rows:
+                            st.info("問題庫還是空的，先用上方「➕ 新增問題範本」建立第一筆吧！")
+
+                        for r in shown:
+                            with st.container(border=True):
+                                if st.session_state.get("qa_edit") == r["_row"]:
+                                    # ✏️ 編輯模式
+                                    e1, e2 = st.columns([1, 2])
+                                    ecat = e1.text_input("分類", key=f"qa_e_cat_{r['_row']}")
+                                    etitle = e2.text_input("問題標題", key=f"qa_e_title_{r['_row']}")
+                                    eq = st.text_area("客戶問題範例", key=f"qa_e_q_{r['_row']}", height=80)
+                                    e_img = st.file_uploader(
+                                        "📷 上傳客戶問題截圖（選填，AI 會一起讀）",
+                                        type=["png", "jpg", "jpeg"], key=f"qa_e_img_{r['_row']}")
+                                    if st.button("🤖 AI 重新生成建議回覆", key=f"qa_e_ai_{r['_row']}",
+                                                 use_container_width=True):
+                                        _eimg = _pil_from_upload(e_img)
+                                        if not api_key:
+                                            st.warning("尚未設定 API 金鑰。")
+                                        elif not (eq.strip() or _eimg is not None):
+                                            st.warning("請先填客戶問題範例或上傳截圖。")
+                                        else:
+                                            with st.spinner("AI 生成中…"):
+                                                out, usage = qa_ai_suggest(
+                                                    api_key, ecat, eq,
+                                                    model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                                    image=_eimg)
+                                            ai_track_cost(usage)
+                                            if out:
+                                                st.session_state[f"qa_e_reply_{r['_row']}"] = out
+                                                st.rerun()
+                                            else:
+                                                st.error("AI 生成失敗。")
+                                    ereply = st.text_area("建議回覆範本", key=f"qa_e_reply_{r['_row']}", height=160)
+                                    ekw = st.text_input("關鍵字", key=f"qa_e_kw_{r['_row']}")
+                                    s1, s2 = st.columns(2)
+                                    if s1.button("💾 儲存", key=f"qa_e_save_{r['_row']}", type="primary",
+                                                 use_container_width=True):
+                                        rec = {"ID": r["ID"] or datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                                               "分類": ecat.strip(), "問題標題": etitle.strip(),
+                                               "客戶問題範例": eq.strip(), "建議回覆範本": ereply.strip(),
+                                               "關鍵字": ekw.strip(),
+                                               "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
+                                        try:
+                                            qa_update(qa_ws, r["_row"], rec)
+                                            st.session_state.pop("qa_edit", None)
+                                            st.success("已更新 ✅")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"更新失敗：{e}")
+                                    if s2.button("✖ 取消", key=f"qa_e_cancel_{r['_row']}",
+                                                 use_container_width=True):
+                                        st.session_state.pop("qa_edit", None)
+                                        st.rerun()
+                                else:
+                                    # 👁️ 檢視模式
+                                    tag = f"`{r['分類']}`　" if (r["分類"] or "").strip() else ""
+                                    st.markdown(f"#### {tag}{r['問題標題'] or '（未命名問題）'}")
+                                    if (r["客戶問題範例"] or "").strip():
+                                        st.markdown(
+                                            f"<div style='color:#798571; margin-bottom:6px;'>💬 {r['客戶問題範例']}</div>",
+                                            unsafe_allow_html=True)
+                                    if (r["關鍵字"] or "").strip():
+                                        st.caption(f"🏷️ {r['關鍵字']}")
+                                    if (r["建議回覆範本"] or "").strip():
+                                        st.markdown("**📋 建議回覆範本（點右上角圖示即可複製）：**")
+                                        st.code(r["建議回覆範本"], language="text")
+                                    cinfo, ce, cd = st.columns([3, 1, 1])
+                                    if (r["更新時間"] or "").strip():
+                                        cinfo.caption(f"🕒 {r['更新時間']}")
+                                    if ce.button("✏️ 編輯", key=f"qa_edit_btn_{r['_row']}",
+                                                 use_container_width=True):
+                                        st.session_state.qa_edit = r["_row"]
+                                        st.session_state[f"qa_e_cat_{r['_row']}"] = r["分類"]
+                                        st.session_state[f"qa_e_title_{r['_row']}"] = r["問題標題"]
+                                        st.session_state[f"qa_e_q_{r['_row']}"] = r["客戶問題範例"]
+                                        st.session_state[f"qa_e_reply_{r['_row']}"] = r["建議回覆範本"]
+                                        st.session_state[f"qa_e_kw_{r['_row']}"] = r["關鍵字"]
+                                        st.rerun()
+                                    if st.session_state.get("qa_del") == r["_row"]:
+                                        st.warning("確定要刪除這筆範本嗎？刪了無法復原。")
+                                        d1, d2 = st.columns(2)
+                                        if d1.button("🗑️ 確定刪除", key=f"qa_del_yes_{r['_row']}",
+                                                     use_container_width=True):
+                                            try:
+                                                qa_delete(qa_ws, r["_row"])
+                                                st.session_state.pop("qa_del", None)
+                                                st.success("已刪除 ✅")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"刪除失敗：{e}")
+                                        if d2.button("取消", key=f"qa_del_no_{r['_row']}",
+                                                     use_container_width=True):
+                                            st.session_state.pop("qa_del", None)
+                                            st.rerun()
+                                    else:
+                                        if cd.button("🗑️ 刪除", key=f"qa_del_btn_{r['_row']}",
+                                                     use_container_width=True):
+                                            st.session_state.qa_del = r["_row"]
+                                            st.rerun()
+
+        # ==========================================
+        # 💌 Tab5：私訊待辦（把已產出的私訊回覆叫出來，複製貼給客人後標記完成）
+        # ==========================================
+        with tab5:
+            with st.container(border=True):
+                section_block("💌", "私訊待辦",
+                              "公開回覆先發、私訊過幾天再回也不會漏：這裡列出「批次評價處理」產出過的每一則私訊回覆，"
+                              "點右上角圖示複製貼給客人，回完按「✅ 標記已私訊」即可。資料存雲端，手機電腦同步。")
+                if not doc:
+                    st.info("請先在左側完成連線，才能查看私訊待辦。")
+                else:
+                    try:
+                        dm_ws, dm_rows, dm_idx = dm_load(doc)
+                        dm_err = None
+                    except Exception as e:
+                        dm_ws, dm_rows, dm_idx, dm_err = None, [], {}, e
+                        st.error(f"讀取回覆紀錄失敗：{e}")
+
+                    if dm_ws is not None:
+                        _todo = [r for r in dm_rows if (r.get(DM_STATUS_COL, "") or "").strip() != DM_DONE]
+                        _done = [r for r in dm_rows if (r.get(DM_STATUS_COL, "") or "").strip() == DM_DONE]
+
+                        f1, f2 = st.columns([1.2, 1])
+                        view = f1.radio("要看哪些", [f"⏳ 待私訊（{len(_todo)}）",
+                                                     f"✅ 已私訊（{len(_done)}）",
+                                                     f"全部（{len(dm_rows)}）"],
+                                        horizontal=True, key="dm_view", label_visibility="collapsed")
+                        dm_kw = f2.text_input("🔍 搜尋（帳號 / 評價內容 / 私訊內容）", key="dm_kw",
+                                              label_visibility="collapsed",
+                                              placeholder="🔍 搜尋帳號或內容")
+
+                        pool = _todo if view.startswith("⏳") else (_done if view.startswith("✅") else dm_rows)
+
+                        def _dm_match(r):
+                            kws = (dm_kw or "").lower().split()
+                            if not kws:
+                                return True
+                            blob = " ".join([str(r.get(c, "")) for c in
+                                             ("客戶帳號", "原始評價內容", "VIP私訊回覆", "紀錄時間")]).lower()
+                            return all(t in blob for t in kws)
+
+                        shown_dm = [r for r in pool if _dm_match(r)]
+                        _limit = int(st.session_state.get("dm_limit", 15))
+                        st.caption(f"共 {len(shown_dm)} 筆，目前顯示最新 {min(_limit, len(shown_dm))} 筆"
+                                   f"　·　⏳ 待私訊 {len(_todo)} 筆")
+
+                        if not dm_rows:
+                            st.info("還沒有任何紀錄。到「批次評價處理」跑過一批評價之後，私訊回覆就會自動出現在這裡。")
+                        elif not shown_dm:
+                            st.info("這個條件下沒有資料，換個關鍵字或切換上面的篩選看看。")
+
+                        for r in shown_dm[:_limit]:
+                            with st.container(border=True):
+                                _done_flag = (r.get(DM_STATUS_COL, "") or "").strip() == DM_DONE
+                                _acc = (r.get("客戶帳號", "") or "未知").strip()
+                                _badge = "✅ 已私訊" if _done_flag else "⏳ 待私訊"
+                                st.markdown(f"#### 👤 {_acc}　`{_badge}`")
+                                _t = (r.get("紀錄時間", "") or "").strip()
+                                _dt = (r.get(DM_TIME_COL, "") or "").strip()
+                                st.caption(f"🕒 產出於 {_t}" + (f"　·　私訊完成 {_dt}" if _dt else ""))
+                                _rev = (r.get("原始評價內容", "") or "").strip()
+                                if _rev:
+                                    st.markdown(
+                                        f"<div style='color:#798571; margin-bottom:6px;'>📝 {_rev[:120]}"
+                                        f"{'…' if len(_rev) > 120 else ''}</div>", unsafe_allow_html=True)
+                                _priv = (r.get("VIP私訊回覆", "") or "").strip()
+                                if _priv:
+                                    st.markdown("**💌 私訊回覆（點右上角圖示即可複製）：**")
+                                    st.code(_priv, language="text")
+                                else:
+                                    st.caption("（這筆沒有私訊內容）")
+                                if _done_flag:
+                                    if st.button("↩ 取消標記（改回待私訊）", key=f"dm_undo_{r['_row']}",
+                                                 use_container_width=True):
+                                        try:
+                                            dm_mark(dm_ws, r["_row"], dm_idx, False)
+                                            st.success("已改回待私訊")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"更新失敗：{e}")
+                                else:
+                                    if st.button("✅ 標記已私訊", key=f"dm_done_{r['_row']}",
+                                                 type="primary", use_container_width=True):
+                                        try:
+                                            dm_mark(dm_ws, r["_row"], dm_idx, True)
+                                            st.success("已標記完成 ✅")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"更新失敗：{e}")
+
+                        if len(shown_dm) > _limit:
+                            if st.button(f"⬇️ 再顯示 15 筆（還有 {len(shown_dm) - _limit} 筆）",
+                                         key="dm_more", use_container_width=True):
+                                st.session_state["dm_limit"] = _limit + 15
+                                st.rerun()
+                        elif _limit > 15:
+                            if st.button("⬆️ 收合回 15 筆", key="dm_less", use_container_width=True):
+                                st.session_state["dm_limit"] = 15
+                                st.rerun()
+
     # ==========================================
     # ✨ 動態文字壓印版：折價券管理
     # ==========================================
@@ -1837,7 +2615,16 @@ if doc:
                     if display_img is None:
                         display_img = base_img
                     if display_img is not None:
-                        st.image(display_img, width=300)
+                        # 📱 預覽改用「完整原圖」當 src、只用 CSS 顯示縮小：
+                        #    這樣手機長按「加入照片」存進相簿的是完整畫質（1080），不再是 300px 糊圖
+                        _pv = BytesIO()
+                        display_img.save(_pv, format="PNG")
+                        _pv_b64 = base64.b64encode(_pv.getvalue()).decode()
+                        st.markdown(
+                            f'<img src="data:image/png;base64,{_pv_b64}" '
+                            f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
+                            f'alt="折價券{display_num}">',
+                            unsafe_allow_html=True)
                     else:
                         st.info("此版位目前為空，請先上傳底圖。")
                 except Exception:
@@ -1854,7 +2641,41 @@ if doc:
                         (display_img or base_img).save(buf, format="PNG")
                         st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
                     with c_hint:
-                        st.markdown("<p style='font-size:13px; color:#8A8275; margin:0; height:38px; display:flex; align-items:center; white-space:nowrap;'>💡 長按圖片可儲存</p>", unsafe_allow_html=True)
+                        st.markdown("<p style='font-size:13px; color:#8A8275; margin:0; height:38px; display:flex; align-items:center; white-space:nowrap;'>💡 長按圖片→存到相簿(完整畫質)</p>", unsafe_allow_html=True)
+
+                # 📱 高畫質存圖：底圖放大到 2160，文字用放大後的字級「重新畫一次」（不是把成品拉大），
+                #    所以文字邊緣真的更銳利。用開關控制（expander 的內容每次都會執行，會拖慢頁面），
+                #    打開才產生、並存進 session 快取，重跑不會重算。
+                if base_img is not None:
+                    _sv_hq = _parse_coupset(next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None))
+                    if st.toggle("📱 產生高畫質圖（長按存相簿用）", key=f"hqon_{slot_id}"):
+                        _hq_sig = (base_img.size, str(sorted(_sv_hq.items())))
+                        _hq_ent = st.session_state.get(f"_hqimg_{slot_id}")
+                        if _hq_ent and _hq_ent[0] == _hq_sig:
+                            hq_img, hq_is_real = _hq_ent[1], _hq_ent[2]
+                        else:
+                            with st.spinner("產生高畫質圖中..."):
+                                if _sv_hq.get("text") and clean_row is not None:
+                                    hq_img = _stamp_coupon_hq(base_img, _sv_hq["text"], _sv_hq.get("color", "#FFFFFF"),
+                                                              _sv_hq["size"], _sv_hq["x"], _sv_hq["y"], _sv_hq["rot"])
+                                    hq_is_real = True
+                                else:
+                                    hq_img, hq_is_real = (display_img or base_img), False
+                            st.session_state[f"_hqimg_{slot_id}"] = (_hq_sig, hq_img, hq_is_real)
+                        _hb = BytesIO(); hq_img.save(_hb, format="PNG")
+                        st.markdown(
+                            f'<img src="data:image/png;base64,{base64.b64encode(_hb.getvalue()).decode()}" '
+                            f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
+                            f'alt="折價券{display_num}高畫質">', unsafe_allow_html=True)
+                        st.download_button(label="💻 下載這張高畫質", data=_hb.getvalue(),
+                                           file_name=f"BearJoy_Coupon_{display_num}_HQ.png", mime="image/png",
+                                           key=f"dl_hq_{slot_id}", use_container_width=True)
+                        _msg = f"這張是 {hq_img.width}×{hq_img.height}（原始底圖 {base_img.width}×{base_img.height}）。手機長按 →「加入照片」。"
+                        if not hq_is_real:
+                            _msg += " ⚠️ 這個版位還沒記住壓印文字，目前顯示的是原尺寸成品；到下面「✏️ 加日期/文字」按一次「✅ 確認儲存」，之後這裡就會用高畫質重畫文字。"
+                        if base_img.width < 1080:
+                            _msg += f" ⚠️ 底圖只有 {base_img.width}px，放大也補不回細節，建議重新上傳 1080 以上的原圖。"
+                        st.caption(_msg)
 
                 # 🗑️ 清除壓印文字：把成品還原成乾淨底圖（去掉日期/文字、清掉位置記憶）
                 if base_img and clean_row:
@@ -1899,14 +2720,7 @@ if doc:
                         if enable_text:
                             # 📅 功能3：讀取此版位上次存的壓印位置，換日期就不用再喬位置
                             sv_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None)
-                            sv = {}
-                            if sv_row and len(sv_row) > 1:
-                                try:
-                                    p = sv_row[1].split("|")
-                                    sv = {"x": int(float(p[0])), "y": int(float(p[1])),
-                                          "size": int(float(p[2])), "rot": int(float(p[3])), "color": p[4]}
-                                except Exception:
-                                    sv = {}
+                            sv = _parse_coupset(sv_row)
                             def_size = max(10, min(sv.get("size", 50), 200))
                             def_rot = max(-180, min(sv.get("rot", 0), 180))
                             def_color = sv.get("color", "#FFFFFF")
@@ -1950,8 +2764,10 @@ if doc:
                                     editor_shown = True
                                     st.image(final_img_to_save, width=300)
                                 else:
-                                    # 畫布寬度固定 px（drawable-canvas 不吃 %）；手機上 300 才不會超出容器被右邊截掉
-                                    disp_w = 300
+                                    # 畫布寬度固定 px（drawable-canvas 不吃 %）；手機上 300 才不會超出容器被右邊截掉。
+                                    # 螢幕夠寬（或想更好按）可自行勾「畫布加大」，圖大一點手指比較好操作。
+                                    _cvbig = st.checkbox("🔍 畫布加大（若右邊被切掉就取消勾選）", key=f"cvbig_{slot_id}")
+                                    disp_w = 360 if _cvbig else 300
                                     cscale = disp_w / base_img.width
                                     disp_h = max(1, int(base_img.height * cscale))
                                     bg = base_img.convert("RGB").resize((disp_w, disp_h), Image.LANCZOS)
@@ -1976,6 +2792,12 @@ if doc:
                                             "originX": "center", "originY": "center",
                                             "fontSize": max(10, int(_init_sz * cscale)), "fill": text_color,
                                             "angle": float(_init_rot), "fontFamily": "sans-serif", "editable": True,
+                                            # 👆 手機用：把四角縮放把手加大加粗（fabric 預設把手只有幾 px，手指幾乎按不到），
+                                            #    touchCornerSize 是觸控時的實際可按範圍。
+                                            "cornerSize": 22, "touchCornerSize": 48,
+                                            "transparentCorners": False, "cornerStyle": "circle",
+                                            "cornerColor": "#E0533D", "cornerStrokeColor": "#FFFFFF",
+                                            "borderColor": "#E0533D", "borderScaleFactor": 2, "padding": 10,
                                         }]
                                     init = {
                                         "version": "4.4.0",
@@ -1991,7 +2813,7 @@ if doc:
                                     # 🔑 key 隨「文字／顏色／清字代次(nonce)」變化：改字或自動清疊字時整個重建
                                     # (乾淨單一文字，不疊加)；拖曳/縮放/旋轉不改 key → 畫布不重建 → 位置保留、放開即讀回並存檔。
                                     _cnonce = int(st.session_state.get(f"cvnonce_{slot_id}", 0))
-                                    _csig = f"{text_input}|{text_color}|{_cnonce}"
+                                    _csig = f"{text_input}|{text_color}|{_cnonce}|{disp_w}"
                                     _ckey = f"cv_{slot_id}_{abs(hash(_csig))}"
                                     try:
                                         cres = st_canvas(initial_drawing=init,
@@ -2027,7 +2849,9 @@ if doc:
                                                 return math.hypot(float(lx0) - _ix, float(ty0) - _iy)
                                             o = max(itexts, key=_moved_dist) if itexts else None
                                             if o:
-                                                sx = float(o.get("scaleX", 1) or 1)
+                                                # 取 scaleX/scaleY 較大者：拉「左右邊」把手時只有其中一個會變，
+                                                # 只讀 scaleX 會發生「明明拉大了字級卻沒變」。
+                                                sx = max(float(o.get("scaleX", 1) or 1), float(o.get("scaleY", 1) or 1))
                                                 ang = float(o.get("angle", 0) or 0)
                                                 lx, ty2 = o.get("left"), o.get("top")
                                                 ofs = float(o.get("fontSize", font_size * cscale) or (font_size * cscale))
@@ -2103,6 +2927,76 @@ if doc:
                                 st.session_state[f"px_{slot_id}"] = x_pos
                                 st.session_state[f"py_{slot_id}"] = y_pos
                                 st.image(final_img_to_save, width=320)
+
+                            # ================= 📱 手機微調區：完全不用拖曳也能喬位置／大小／角度 =================
+                            # 手機上拖曳與拉角縮放很難精準（把手小、又常誤觸捲動），這裡用按鈕一下一下推。
+                            # 按下去會同時更新畫布的基準位置並重建畫布，畫布上的文字才會跟著跳到新位置。
+                            def _apply_nudge(nx=None, ny=None, nsz=None, nrot=None):
+                                _nx = max(0, min(int(x_pos if nx is None else nx), base_img.width))
+                                _ny = max(0, min(int(y_pos if ny is None else ny), base_img.height))
+                                _ns = max(10, min(int(font_size if nsz is None else nsz), 200))
+                                _nr = max(-180, min(int(rotation_angle if nrot is None else nrot), 180))
+                                st.session_state[f"px_{slot_id}"] = _nx
+                                st.session_state[f"py_{slot_id}"] = _ny
+                                st.session_state[f"csz_{slot_id}"] = _ns
+                                st.session_state[f"crot_{slot_id}"] = _nr
+                                st.session_state[f"cinitx_{slot_id}"] = _nx
+                                st.session_state[f"cinity_{slot_id}"] = _ny
+                                st.session_state[f"cinitsz_{slot_id}"] = _ns
+                                st.session_state[f"cinitrot_{slot_id}"] = _nr
+                                st.session_state[f"cvnonce_{slot_id}"] = int(st.session_state.get(f"cvnonce_{slot_id}", 0)) + 1
+                                st.rerun()
+
+                            _step_big = st.toggle("粗調（一下移動比較多）", key=f"stepbig_{slot_id}")
+                            _mv = max(1, int(base_img.width * (0.05 if _step_big else 0.01)))
+                            _dsz = 8 if _step_big else 2
+                            _drot = 5 if _step_big else 1
+
+                            _n1, _n2, _n3, _n4 = st.columns(4)
+                            _n1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            if _n1.button("⬅", key=f"ndl_{slot_id}", use_container_width=True, help="往左移"):
+                                _apply_nudge(nx=x_pos - _mv)
+                            if _n2.button("➡", key=f"ndr_{slot_id}", use_container_width=True, help="往右移"):
+                                _apply_nudge(nx=x_pos + _mv)
+                            if _n3.button("⬆", key=f"ndu_{slot_id}", use_container_width=True, help="往上移"):
+                                _apply_nudge(ny=y_pos - _mv)
+                            if _n4.button("⬇", key=f"ndd_{slot_id}", use_container_width=True, help="往下移"):
+                                _apply_nudge(ny=y_pos + _mv)
+
+                            _m1, _m2, _m3, _m4 = st.columns(4)
+                            _m1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            if _m1.button("➖字", key=f"ndsm_{slot_id}", use_container_width=True, help="字變小"):
+                                _apply_nudge(nsz=font_size - _dsz)
+                            if _m2.button("➕字", key=f"ndbg_{slot_id}", use_container_width=True, help="字變大"):
+                                _apply_nudge(nsz=font_size + _dsz)
+                            if _m3.button("↺", key=f"ndrl_{slot_id}", use_container_width=True, help="逆時針轉"):
+                                _apply_nudge(nrot=rotation_angle - _drot)
+                            if _m4.button("↻", key=f"ndrr_{slot_id}", use_container_width=True, help="順時針轉"):
+                                _apply_nudge(nrot=rotation_angle + _drot)
+
+                            # 📐 大小拉桿：每次重跑都先把拉桿同步成「目前字級」（畫布或 ±字 改過也跟著動），
+                            #    並用 on_change 回呼——只有使用者真的拉動才套用。
+                            #    （不可改用「比對拉桿值≠字級就套用」：重跑時拉桿可能回到最小值 10，會把字級打回 10。）
+                            _szkey = f"szui_{slot_id}"
+
+                            def _on_size_change(_sid=slot_id, _k=_szkey):
+                                _v = max(10, min(int(st.session_state.get(_k, 50)), 200))
+                                st.session_state[f"csz_{_sid}"] = _v
+                                st.session_state[f"cinitsz_{_sid}"] = _v
+                                st.session_state[f"cvnonce_{_sid}"] = int(st.session_state.get(f"cvnonce_{_sid}", 0)) + 1
+
+                            st.session_state[_szkey] = int(font_size)
+                            st.slider("📐 文字大小", 10, 200, key=_szkey, on_change=_on_size_change)
+                            _cent_c1, _cent_c2 = st.columns(2)
+                            _cent_c1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            _do_center = _cent_c1.button("🎯 水平置中", key=f"ndcx_{slot_id}", use_container_width=True, help="文字移到圖片正中間（左右）")
+                            _do_reset = _cent_c2.button("⟲ 角度歸零", key=f"ndr0_{slot_id}", use_container_width=True, help="轉正")
+                            st.caption(f"目前：位置 {x_pos},{y_pos}　大小 {font_size}　角度 {rotation_angle}°"
+                                       f"　·　按一下移動 {_mv}px（{'粗調' if _step_big else '細調'}）")
+                            if _do_center:
+                                _apply_nudge(nx=base_img.width // 2)
+                            if _do_reset:
+                                _apply_nudge(nrot=0)
                         else:
                             st.markdown("**👇 原始圖片預覽:**")
                             st.image(base_img, width=300)
@@ -2147,7 +3041,11 @@ if doc:
                                         pass
                                 # 📅 功能3：一併記住壓印位置（下次換日期免重喬）
                                 if enable_text:
-                                    _save_kv(ws_cfg, f"coupset_{slot_id}", f"{x_pos}|{y_pos}|{font_size}|{rotation_angle}|{text_color}")
+                                    # 末欄加存「壓印文字」：高畫質存圖才能用大字級重畫同一段字（| 會被當分隔符，換成全形）
+                                    _txt_mem = (text_input or "").replace("|", "｜")
+                                    _save_kv(ws_cfg, f"coupset_{slot_id}",
+                                             f"{x_pos}|{y_pos}|{font_size}|{rotation_angle}|{text_color}|{_txt_mem}")
+                                    st.session_state.pop(f"_hqimg_{slot_id}", None)
 
                                 st.session_state.pop("_decoded_imgs", None)
                                 st.session_state.refresh_cfg = True

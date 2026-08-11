@@ -855,6 +855,43 @@ def qa_ai_suggest(api_key, category, question, model=GEMINI_DEFAULT, image=None)
         return None, usage
     return _strip_md(text).strip(), usage
 
+def qa_ai_refine(api_key, base_reply, instruction, category="", question="",
+                 model=GEMINI_DEFAULT, image=None):
+    """把「現有的回覆範本」依你的加強指示改寫成一則完整、可直接複製貼給客人的回覆。
+    例：想加強「多強調七天鑑賞期」「語氣再親切一點」「補一句提醒保留外箱」。
+    沒有現成回覆時就等同直接生成。回傳 (新回覆 or None, usage)。"""
+    base = (base_reply or "").strip()
+    want = (instruction or "").strip()
+    if not want:
+        return None, None
+    prompt = f"""你是蝦皮賣場 BearJoy 的客服主管 Sharon。請依照我的要求，改寫下面這則客服回覆。
+
+【語氣】溫暖、專業、貼心，適度使用 Emoji，分段換行、版面清爽。
+【長度】約 3～8 行，精簡好讀，不要長篇大論。
+【結尾】最後一行署名：—— BearJoy Sharon
+
+【重要規則】
+1. 保留原回覆裡已經正確的資訊與承諾，不要刪掉、也不要改動條件（天數、金額、運費由誰負擔等）。
+2. 把我要加強的內容**自然融入**整則回覆，不要只是加在最後一句、也不要條列成說明。
+3. 不可以自己新增原本沒有的承諾（例如額外折扣、免運、送贈品）。
+4. 輸出「完整的一則回覆」，是可以直接整段複製貼給客人的狀態。
+
+【問題分類】{category or '一般客服'}
+【客戶問題】{question.strip() if question else '（未填，請依原回覆內容判斷）'}
+
+【原本的回覆】
+{base if base else '（目前還沒有回覆，請直接依我的要求寫一則新的）'}
+
+【我要加強／調整的地方】
+{want}
+
+請「只」輸出改寫後的完整回覆內容本身，不要加任何說明、標題或引號。"""
+    contents = [prompt, image] if image is not None else [prompt]
+    text, usage = gemini_call_costed(api_key, contents, model)
+    if not text:
+        return None, usage
+    return _strip_md(text).strip(), usage
+
 def _json_list_from_text(text):
     """從 AI 回覆中取出 JSON 陣列（容忍 ```json 圍欄、前後多餘說明）。失敗回 []。"""
     if not text:
@@ -2292,48 +2329,86 @@ if doc:
                 with st.container(border=True):
                     if st.session_state.get("qa_edit") == r["_row"]:
                         # ✏️ 編輯模式
-                        ecat = _cat_picker(f"qa_e_cat_{r['_row']}", r["分類"].strip())
-                        etitle = st.text_input("問題標題", key=f"qa_e_title_{r['_row']}")
-                        eq = st.text_area("客戶問題範例", key=f"qa_e_q_{r['_row']}", height=80)
-                        ereply = st.text_area("建議回覆範本", key=f"qa_e_reply_{r['_row']}", height=300)
-                        ekw = st.text_input("關鍵字（空格分隔）", key=f"qa_e_kw_{r['_row']}")
+                        _rw = r["_row"]
+                        ecat = _cat_picker(f"qa_e_cat_{_rw}", r["分類"].strip())
+                        etitle = st.text_input("問題標題", key=f"qa_e_title_{_rw}")
+                        eq = st.text_area("客戶問題範例", key=f"qa_e_q_{_rw}", height=80)
+                        # 🔑 回覆框用「代次 nonce」當 key：AI 改寫後換一把 key 重建，內容才換得掉。
+                        #    （元件建立後不能再改它的 session_state，所以不能直接寫回同一把 key。）
+                        _ern = int(st.session_state.get(f"qa_e_rnonce_{_rw}", 0))
+                        ereply = st.text_area("建議回覆範本", height=300, key=f"qa_e_reply_{_rw}_{_ern}",
+                                              value=st.session_state.get(f"qa_e_rval_{_rw}",
+                                                                         r["建議回覆範本"]))
+                        # ✍️ 想加強什麼 → AI 套進整則回覆
+                        _eins = st.text_input("✍️ 想加強／調整什麼？（AI 會融進整則回覆）",
+                                              key=f"qa_e_ins_{_rw}",
+                                              placeholder="例如：多強調七天鑑賞期、語氣再親切一點、補一句提醒保留外箱")
                         e_img = st.file_uploader("📷 客戶問題截圖（選填，AI 會一起讀）",
-                                                 type=["png", "jpg", "jpeg"], key=f"qa_e_img_{r['_row']}")
-                        b1, b2, b3 = st.columns(3)
-                        if b1.button("💾 儲存", key=f"qa_e_save_{r['_row']}", type="primary",
-                                     use_container_width=True):
+                                                 type=["png", "jpg", "jpeg"], key=f"qa_e_img_{_rw}")
+                        ekw = st.text_input("關鍵字（空格分隔）", key=f"qa_e_kw_{_rw}")
+
+                        a1, a2 = st.columns(2)
+                        _do_refine = a1.button("🤖 依指示改寫回覆", key=f"qa_e_ref_{_rw}",
+                                               use_container_width=True)
+                        _do_regen = a2.button("🔄 整則重新生成", key=f"qa_e_ai_{_rw}",
+                                              use_container_width=True,
+                                              help="不看原本的回覆，依「客戶問題範例」重寫一則新的")
+                        b1, b2 = st.columns(2)
+                        _do_save = b1.button("💾 儲存", key=f"qa_e_save_{_rw}", type="primary",
+                                             use_container_width=True)
+                        _do_cancel = b2.button("✖ 取消", key=f"qa_e_cancel_{_rw}", use_container_width=True)
+
+                        def _put_reply(_txt, _row=_rw, _n=_ern):
+                            """把 AI 結果放進回覆框（換 key 重建），並清掉加強指示。"""
+                            st.session_state[f"qa_e_rval_{_row}"] = _txt
+                            st.session_state[f"qa_e_rnonce_{_row}"] = _n + 1
+
+                        if _do_refine or _do_regen:
+                            _eimg = _pil_from_upload(e_img)
+                            if not api_key:
+                                st.warning("尚未設定 API 金鑰。")
+                            elif _do_refine and not _eins.strip():
+                                st.warning("請先在「想加強／調整什麼」寫一句話，AI 才知道要往哪改。")
+                            elif _do_regen and not (eq.strip() or _eimg is not None):
+                                st.warning("請先填客戶問題範例或上傳截圖。")
+                            else:
+                                with st.spinner("AI 生成中…"):
+                                    if _do_refine:
+                                        out, usage = qa_ai_refine(
+                                            api_key, ereply, _eins, category=ecat, question=eq,
+                                            model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                            image=_eimg)
+                                    else:
+                                        out, usage = qa_ai_suggest(
+                                            api_key, ecat, eq,
+                                            model=st.session_state.get("qa_model", GEMINI_DEFAULT),
+                                            image=_eimg)
+                                ai_track_cost(usage)
+                                if out:
+                                    _put_reply(out)
+                                    st.rerun()
+                                else:
+                                    st.error("AI 生成失敗，請稍後再試。")
+                        if _do_save:
                             rec = {"ID": r["ID"] or datetime.now().strftime("%Y%m%d%H%M%S%f"),
                                    "分類": ecat.strip(), "問題標題": etitle.strip(),
                                    "客戶問題範例": eq.strip(), "建議回覆範本": ereply.strip(),
                                    "關鍵字": ekw.strip(),
                                    "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
                             try:
-                                qa_update(qa_ws, r["_row"], rec)
-                                st.session_state.pop("qa_edit", None)
+                                qa_update(qa_ws, _rw, rec)
+                                for _k in ("qa_edit",):
+                                    st.session_state.pop(_k, None)
+                                st.session_state.pop(f"qa_e_rval_{_rw}", None)
+                                st.session_state.pop(f"qa_e_rnonce_{_rw}", None)
                                 st.success("已更新 ✅")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"更新失敗：{e}")
-                        if b2.button("🤖 AI 重寫回覆", key=f"qa_e_ai_{r['_row']}", use_container_width=True):
-                            _eimg = _pil_from_upload(e_img)
-                            if not api_key:
-                                st.warning("尚未設定 API 金鑰。")
-                            elif not (eq.strip() or _eimg is not None):
-                                st.warning("請先填客戶問題範例或上傳截圖。")
-                            else:
-                                with st.spinner("AI 生成中…"):
-                                    out, usage = qa_ai_suggest(
-                                        api_key, ecat, eq,
-                                        model=st.session_state.get("qa_model", GEMINI_DEFAULT),
-                                        image=_eimg)
-                                ai_track_cost(usage)
-                                if out:
-                                    st.session_state[f"qa_e_reply_{r['_row']}"] = out
-                                    st.rerun()
-                                else:
-                                    st.error("AI 生成失敗。")
-                        if b3.button("✖ 取消", key=f"qa_e_cancel_{r['_row']}", use_container_width=True):
+                        if _do_cancel:
                             st.session_state.pop("qa_edit", None)
+                            st.session_state.pop(f"qa_e_rval_{_rw}", None)
+                            st.session_state.pop(f"qa_e_rnonce_{_rw}", None)
                             st.rerun()
                     else:
                         # 👁️ 檢視模式：標題＋分類標籤＋可複製的完整範本
@@ -2353,8 +2428,11 @@ if doc:
                             st.session_state.qa_edit = r["_row"]
                             st.session_state[f"qa_e_title_{r['_row']}"] = r["問題標題"]
                             st.session_state[f"qa_e_q_{r['_row']}"] = r["客戶問題範例"]
-                            st.session_state[f"qa_e_reply_{r['_row']}"] = r["建議回覆範本"]
                             st.session_state[f"qa_e_kw_{r['_row']}"] = r["關鍵字"]
+                            # 回覆框走 rval＋nonce（見編輯區說明）：每次進編輯都從雲端內容乾淨起步
+                            st.session_state[f"qa_e_rval_{r['_row']}"] = r["建議回覆範本"]
+                            st.session_state[f"qa_e_rnonce_{r['_row']}"] = \
+                                int(st.session_state.get(f"qa_e_rnonce_{r['_row']}", 0)) + 1
                             st.rerun()
                         if st.session_state.get("qa_del") == r["_row"]:
                             st.warning("確定要刪除這筆範本嗎？刪了無法復原。")
@@ -2386,25 +2464,44 @@ if doc:
                              placeholder="客人實際會怎麼問（也是 AI 生成的依據；可只上傳截圖）")
                 qa_new_img = st.file_uploader("📷 客戶問題截圖（選填，AI 會一起讀圖內容）",
                                               type=["png", "jpg", "jpeg"], key="qa_new_img")
-                if st.button("🤖 用 AI 生成建議回覆", key="qa_new_ai", use_container_width=True):
+                # 回覆框同樣走 rval＋nonce，AI 生成／改寫後才換得掉內容
+                _nrn = int(st.session_state.get("qa_new_rnonce", 0))
+                _new_reply = st.text_area("建議回覆範本（可直接編輯）", height=300,
+                                          key=f"qa_new_reply_{_nrn}",
+                                          value=st.session_state.get("qa_new_rval", ""),
+                                          placeholder="可手動輸入，或用下面的 AI 生成後再微調")
+                _nins = st.text_input("✍️ 想加強／調整什麼？（AI 會融進整則回覆）", key="qa_new_ins",
+                                      placeholder="例如：多強調七天鑑賞期、語氣再親切一點、補一句提醒保留外箱")
+                n1, n2 = st.columns(2)
+                _n_refine = n1.button("🤖 依指示改寫回覆", key="qa_new_ref", use_container_width=True)
+                _n_gen = n2.button("🔄 整則重新生成", key="qa_new_ai", use_container_width=True,
+                                   help="不看現有內容，依「客戶問題範例」寫一則新的")
+                if _n_refine or _n_gen:
                     _img = _pil_from_upload(qa_new_img)
+                    _q_now = st.session_state.get("qa_new_q", "")
                     if not api_key:
                         st.warning("尚未設定 API 金鑰，無法使用 AI。")
-                    elif not (st.session_state.get("qa_new_q", "").strip() or _img is not None):
+                    elif _n_refine and not _nins.strip():
+                        st.warning("請先在「想加強／調整什麼」寫一句話，AI 才知道要往哪改。")
+                    elif _n_gen and not (_q_now.strip() or _img is not None):
                         st.warning("請先填「客戶問題範例」或上傳截圖，AI 才知道要回什麼。")
                     else:
                         with st.spinner("AI 生成中…"):
-                            out, usage = qa_ai_suggest(
-                                api_key, _ncat, st.session_state.get("qa_new_q", ""),
-                                model=st.session_state.get("qa_model", GEMINI_DEFAULT), image=_img)
+                            if _n_refine:
+                                out, usage = qa_ai_refine(
+                                    api_key, _new_reply, _nins, category=_ncat, question=_q_now,
+                                    model=st.session_state.get("qa_model", GEMINI_DEFAULT), image=_img)
+                            else:
+                                out, usage = qa_ai_suggest(
+                                    api_key, _ncat, _q_now,
+                                    model=st.session_state.get("qa_model", GEMINI_DEFAULT), image=_img)
                         ai_track_cost(usage)
                         if out:
-                            st.session_state["qa_new_reply"] = out
+                            st.session_state["qa_new_rval"] = out
+                            st.session_state["qa_new_rnonce"] = _nrn + 1
                             st.rerun()
                         else:
                             st.error("AI 生成失敗，請稍後再試。")
-                st.text_area("建議回覆範本（可直接編輯）", key="qa_new_reply", height=300,
-                             placeholder="可手動輸入，或按上方按鈕讓 AI 生成後再微調")
                 st.text_input("關鍵字（用空格分隔，方便日後搜尋）", key="qa_new_kw",
                               placeholder="例如 退貨 七天 鑑賞期")
                 if st.button("💾 儲存到問題庫", key="qa_new_save", type="primary", use_container_width=True):
@@ -2415,13 +2512,14 @@ if doc:
                     else:
                         rec = {"ID": datetime.now().strftime("%Y%m%d%H%M%S%f"),
                                "分類": _ncat.strip(), "問題標題": _title, "客戶問題範例": _q,
-                               "建議回覆範本": st.session_state.get("qa_new_reply", "").strip(),
+                               "建議回覆範本": (_new_reply or "").strip(),
                                "關鍵字": st.session_state.get("qa_new_kw", "").strip(),
                                "更新時間": datetime.now().strftime("%Y-%m-%d %H:%M")}
                         try:
                             qa_add(qa_ws, rec)
-                            for k in ["qa_new_title", "qa_new_q", "qa_new_reply", "qa_new_kw"]:
+                            for k in ["qa_new_title", "qa_new_q", "qa_new_kw", "qa_new_ins", "qa_new_rval"]:
                                 st.session_state.pop(k, None)
+                            st.session_state["qa_new_rnonce"] = _nrn + 1   # 清空回覆框
                             st.success("已新增到問題庫 ✅")
                             st.rerun()
                         except Exception as e:

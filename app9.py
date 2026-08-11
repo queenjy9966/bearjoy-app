@@ -205,20 +205,6 @@ st.markdown("""
     /* ✨ 勾選框文字一排不換行（回購語氣／保存截圖） */
     [data-testid="stCheckbox"] label { white-space: nowrap !important; }
     [data-testid="stCheckbox"] label p { white-space: nowrap !important; font-size: 13.5px !important; margin: 0 !important; }
-    /* ✨ 折價券下載鍵：維持原本窄寬度（不套用全站 240px），讓旁邊長按提示不被擠到重疊 */
-    div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) .stDownloadButton > button {
-        width: auto !important; min-width: 84px !important; max-width: 140px !important;
-        padding: 0 14px !important; white-space: nowrap !important;
-    }
-    /* 下載鍵欄位只取按鈕本身寬度、不留多餘空白，讓長按提示緊鄰按鈕（按鈕不被壓縮、不換行） */
-    div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) > div[data-testid="column"]:has(.coupon-dl-narrow) {
-        flex: 0 0 auto !important; width: auto !important; min-width: 0 !important;
-    }
-    /* 欄距收到最小，並把長按提示欄再往左挪，貼近下載鍵 */
-    div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) { gap: 0.2rem !important; }
-    div[data-testid="stHorizontalBlock"]:has(.coupon-dl-narrow) > div[data-testid="column"]:last-child {
-        margin-left: -10px !important;
-    }
     /* ✨ 可複製區塊（建議回覆範本／私訊內容）：字放大、行距拉開、長行自動換行不要橫向捲 */
     div[data-testid="stCode"] pre, div[data-testid="stCode"] code,
     .stCode pre, .stCode code {
@@ -1418,18 +1404,6 @@ def _parse_coupset(row):
     except Exception:
         return {}
 
-def _stamp_coupon_hq(base_img, text, color, size, cx, cy, rot, target=2160):
-    """高畫質輸出：先把乾淨底圖等比放大到長邊 target，再用「放大後的字級」重新渲染文字。
-    重點是文字為向量重繪、不是把 1080 成品硬拉大 → 文字邊緣真的更銳利（底圖本身則是插值放大）。"""
-    w, h = base_img.size
-    k = float(target) / max(w, h)
-    if k <= 1.01:                      # 底圖本來就夠大就不放大，避免無謂變胖
-        return _stamp_coupon(base_img, text, color, size, cx, cy, rot)[0]
-    big = base_img.convert("RGB").resize((int(round(w * k)), int(round(h * k))), Image.LANCZOS)
-    out, _, _ = _stamp_coupon(big, text, color, max(10, int(round(size * k))),
-                              int(round(cx * k)), int(round(cy * k)), rot)
-    return out
-
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -1561,6 +1535,12 @@ if doc:
                         except Exception as e:
                             st.error(f"儲存失敗：{e}")
 
+                # ✍️ 這批要加強什麼：會一起交給 AI，套進每一則賣場回覆與私訊回覆
+                batch_ins = st.text_input(
+                    "✍️ 這批想加強／調整什麼？（選填）", key="batch_ins",
+                    placeholder="例如：多提一句夏天出遊很適合、語氣再親切一點、提醒可回購")
+                st.caption("留空就照原本語氣寫。跑完之後，每一筆還可以單獨再請 AI 加強。")
+
                 st.markdown("##### ③ 選擇 AI 模型")
                 _bkeys = list(GEMINI_PRICES.keys())
                 batch_model = st.selectbox(
@@ -1632,6 +1612,11 @@ if doc:
 
                         with st.spinner(f"🏃‍♀️ AI 正在為您撰寫..."):
                             current_prompt = system_prompt + ("\n注意：此為二回購老客，請加入朋友般的尊榮感。" if is_vip_check else "")
+                            # ✍️ 本批加強指示：融進賣場回覆與私訊回覆，但不可自行新增沒有的優惠承諾
+                            if (batch_ins or "").strip():
+                                current_prompt += ("\n【本批額外要求（務必遵守）】：" + batch_ins.strip() +
+                                                   "\n請把這個要求自然融入 [PUBLIC] 與 [PRIVATE] 兩段回覆中，"
+                                                   "不要另外條列說明，也不可以自行新增原本沒有的優惠或承諾。")
                             # ✨ 速度優化：第一張立即處理，之後每張間隔 4 秒，避免免費版流量限制；
                             # 重試/退避邏輯統一交給 gemini_generate()，不再每次嘗試前都空等 3 秒。
                             if file_idx > 0:
@@ -1690,6 +1675,7 @@ if doc:
                     with cards_container:
                         ai_render_cost(st.session_state.get("batch_model", GEMINI_DEFAULT))
 
+                    _row_map = {}      # (帳號, 評價內容) → 雲端列號，供「跑完再請 AI 加強」寫回同一列
                     if doc and results_to_cloud:
                         try:
                             ws_history = get_or_create_ws(doc, "回覆紀錄")
@@ -1709,7 +1695,10 @@ if doc:
                                 seen_pairs.add(pair)
                                 new_rows.append(row)
                             if new_rows:
+                                _first_new = len(existing) + 1   # append 前的總列數＋1＝第一筆新資料的列號
                                 ws_history.append_rows(new_rows)
+                                for _i, _nr in enumerate(new_rows):
+                                    _row_map[(str(_nr[1]).strip(), str(_nr[2]).strip())] = _first_new + _i
 
                             ws_vip = get_or_create_ws(doc, "VIP名單")
                             # ✨ 速度優化：原本對 VIP 名單讀了兩次（get_all_values + get_all_records），
@@ -1741,9 +1730,78 @@ if doc:
                             msg = f"🎉 完美同步！新增 {len(new_rows)} 筆紀錄"
                             if dup_count:
                                 msg += f"（已自動略過 {dup_count} 筆重複評價，不重複計算互動次數）"
-                            top_success_msg.success(msg)
+                            st.session_state["batch_msg"] = msg
                         except Exception as e:
                             st.error(f"雲端同步失敗：請確認試算表格式是否正確。({e})")
+
+                    # 📋 把這批結果留下來：重跑不會消失，而且每一筆都能再請 AI 加強
+                    if results_to_cloud:
+                        st.session_state["batch_results"] = [
+                            {"acc": _r[1], "rev": _r[2], "pub": _r[3], "priv": _r[4],
+                             "row": _row_map.get((str(_r[1]).strip(), str(_r[2]).strip()))}
+                            for _r in results_to_cloud]
+                        st.rerun()
+
+                # 📋 上一批的結果（重跑也不會不見）：可逐筆下指示請 AI 改寫，改完同步寫回雲端那一列
+                _bres = st.session_state.get("batch_results") or []
+                if _bres and not start_btn:
+                    if st.session_state.get("batch_msg"):
+                        top_success_msg.success(st.session_state["batch_msg"])
+
+                    def _batch_rewrite(i, field, col_no):
+                        """依加強指示改寫第 i 筆的賣場回覆(field='pub') 或私訊回覆(field='priv')，
+                        成功就更新畫面內容，並寫回雲端「回覆紀錄」同一列（寫前先核對帳號，避免寫錯列）。"""
+                        it = st.session_state["batch_results"][i]
+                        ins = (st.session_state.get(f"br_ins_{i}", "") or "").strip()
+                        if not api_key:
+                            st.warning("尚未設定 API 金鑰。")
+                            return
+                        if not ins:
+                            st.warning("請先在「想加強／調整什麼」寫一句話，AI 才知道要往哪改。")
+                            return
+                        with st.spinner("AI 改寫中…"):
+                            out, usage = qa_ai_refine(
+                                api_key, it[field], ins, category="顧客評價回覆", question=it["rev"],
+                                model=st.session_state.get("batch_model", GEMINI_DEFAULT))
+                        ai_track_cost(usage)
+                        if not out:
+                            st.error("AI 改寫失敗，請稍後再試。")
+                            return
+                        st.session_state["batch_results"][i][field] = out
+                        if doc and it.get("row"):
+                            try:
+                                _ws = get_or_create_ws(doc, "回覆紀錄")
+                                if str(_ws.cell(it["row"], 2).value or "").strip() == str(it["acc"]).strip():
+                                    _ws.update_cell(it["row"], col_no, out)
+                                else:
+                                    st.caption("⚠️ 雲端那一列對不上帳號，這次只改畫面沒有寫回雲端。")
+                            except Exception as e:
+                                st.caption(f"⚠️ 寫回雲端失敗（畫面已更新）：{e}")
+                        st.rerun()
+
+                    with cards_container:
+                        for _i, _it in enumerate(_bres):
+                            with st.expander(f"✨ 客戶帳號：{_it['acc']}", expanded=True):
+                                st.markdown(f"**📝 原始評價內容:** {_it['rev']}")
+                                st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
+                                st.code(_it["pub"], language="text")
+                                st.markdown("**💌 私訊回覆 (點擊右上角複製):**")
+                                st.code(_it["priv"], language="text")
+                                st.text_input("✍️ 想加強／調整什麼？（AI 會融進整則回覆）",
+                                              key=f"br_ins_{_i}",
+                                              placeholder="例如：多謝謝他提到的材質、語氣再親切一點")
+                                _q1, _q2 = st.columns(2)
+                                if _q1.button("🤖 改寫賣場回覆", key=f"br_pub_{_i}", use_container_width=True):
+                                    _batch_rewrite(_i, "pub", 4)
+                                if _q2.button("🤖 改寫私訊回覆", key=f"br_priv_{_i}", use_container_width=True):
+                                    _batch_rewrite(_i, "priv", 5)
+                        ai_render_cost(st.session_state.get("batch_model", GEMINI_DEFAULT))
+                        if st.button("🧹 清掉這批結果", key="br_clear", use_container_width=True):
+                            for _k in [k for k in list(st.session_state.keys()) if str(k).startswith("br_ins_")]:
+                                st.session_state.pop(_k, None)
+                            st.session_state.pop("batch_results", None)
+                            st.session_state.pop("batch_msg", None)
+                            st.rerun()
 
         with tab2:
             with st.container(border=True):
@@ -2780,68 +2838,15 @@ if doc:
                 except Exception:
                     st.warning("圖片載入異常，請重新上傳")
 
-                # ✨ 下載鈕（窄）＋長按提示：同一排；提示文字與下載鍵框上下置中、不重疊
+                # ✨ 下載鈕＋提示改成上下兩行：並排在手機上會擠到重疊、右邊字還會被切掉
                 if base_img:
-                    c_dl, c_hint = st.columns([0.8, 1.7], gap="small")
-                    with c_dl:
-                        # 埋入錨點，讓此下載鍵維持原本窄寬度（不套用全站 240px 統一寬）；keep-row 讓手機版維持並排
-                        st.markdown('<span class="coupon-dl-narrow" style="display:none;"></span><span class="keep-row" style="display:none;"></span>', unsafe_allow_html=True)
-                        buf = BytesIO()
-                        # ✨ 畫質升級：無損 PNG 下載（下載已存成品＝含字那張）
-                        (display_img or base_img).save(buf, format="PNG")
-                        st.download_button(label="💻 下載", data=buf.getvalue(), file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png", key=f"dl_btn_{slot_id}")
-                    with c_hint:
-                        st.markdown("<p style='font-size:13px; color:#8A8275; margin:0; height:38px; display:flex; align-items:center; white-space:nowrap;'>💡 長按圖片→存到相簿(完整畫質)</p>", unsafe_allow_html=True)
-
-                # 📱 高畫質存圖：底圖放大到 2160，文字用放大後的字級「重新畫一次」（不是把成品拉大），
-                #    所以文字邊緣真的更銳利。用開關控制（expander 的內容每次都會執行，會拖慢頁面），
-                #    打開才產生、並存進 session 快取，重跑不會重算。
-                if base_img is not None:
-                    _sv_hq = _parse_coupset(next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None))
-                    if st.toggle("📱 產生高畫質圖（長按存相簿用）", key=f"hqon_{slot_id}"):
-                        _hq_sig = (base_img.size, str(sorted(_sv_hq.items())))
-                        _hq_ent = st.session_state.get(f"_hqimg_{slot_id}")
-                        if _hq_ent and _hq_ent[0] == _hq_sig:
-                            hq_img, hq_is_real = _hq_ent[1], _hq_ent[2]
-                        else:
-                            with st.spinner("產生高畫質圖中..."):
-                                if _sv_hq.get("text") and clean_row is not None:
-                                    hq_img = _stamp_coupon_hq(base_img, _sv_hq["text"], _sv_hq.get("color", "#FFFFFF"),
-                                                              _sv_hq["size"], _sv_hq["x"], _sv_hq["y"], _sv_hq["rot"])
-                                    hq_is_real = True
-                                else:
-                                    hq_img, hq_is_real = (display_img or base_img), False
-                            st.session_state[f"_hqimg_{slot_id}"] = (_hq_sig, hq_img, hq_is_real)
-                        _hb = BytesIO(); hq_img.save(_hb, format="PNG")
-                        st.markdown(
-                            f'<img src="data:image/png;base64,{base64.b64encode(_hb.getvalue()).decode()}" '
-                            f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
-                            f'alt="折價券{display_num}高畫質">', unsafe_allow_html=True)
-                        st.download_button(label="💻 下載這張高畫質", data=_hb.getvalue(),
-                                           file_name=f"BearJoy_Coupon_{display_num}_HQ.png", mime="image/png",
-                                           key=f"dl_hq_{slot_id}", use_container_width=True)
-                        _msg = f"這張是 {hq_img.width}×{hq_img.height}（原始底圖 {base_img.width}×{base_img.height}）。手機長按 →「加入照片」。"
-                        if not hq_is_real:
-                            _msg += " ⚠️ 這個版位還沒記住壓印文字，目前顯示的是原尺寸成品；到下面「✏️ 加日期/文字」按一次「✅ 確認儲存」，之後這裡就會用高畫質重畫文字。"
-                        if base_img.width < 1080:
-                            _msg += f" ⚠️ 底圖只有 {base_img.width}px，放大也補不回細節，建議重新上傳 1080 以上的原圖。"
-                        st.caption(_msg)
-
-                # 🗑️ 清除壓印文字：把成品還原成乾淨底圖（去掉日期/文字、清掉位置記憶）
-                if base_img and clean_row:
-                    if st.button("🗑️ 清除文字（還原乾淨底圖）", use_container_width=True, key=f"clr_txt_{slot_id}"):
-                        with st.spinner("清除中..."):
-                            chunks = img_to_base64_chunks(base_img.convert("RGB"))
-                            # 先一次收集要刪的列、由大到小刪（避免刪一列後索引位移刪錯）
-                            _keys = (f"coupon_{slot_id}", f"coupset_{slot_id}")
-                            for ri in sorted([i + 1 for i, r in enumerate(cfg_data)
-                                              if r and r[0] in _keys], reverse=True):
-                                ws_cfg.delete_rows(ri)
-                            ws_cfg.append_row([f"coupon_{slot_id}"] + chunks)  # 成品還原成乾淨底圖
-                            st.session_state.pop("_decoded_imgs", None)
-                            st.session_state.refresh_cfg = True
-                            st.success("已清除文字，還原成乾淨底圖！")
-                            st.rerun()
+                    buf = BytesIO()
+                    # ✨ 畫質升級：無損 PNG 下載（下載已存成品＝含字那張）
+                    (display_img or base_img).save(buf, format="PNG")
+                    st.download_button(label="💻 下載到電腦", data=buf.getvalue(),
+                                       file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png",
+                                       key=f"dl_btn_{slot_id}", use_container_width=True)
+                    st.caption("💡 手機直接長按上面那張圖 → 存到相簿（原畫質）")
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 
@@ -2883,7 +2888,11 @@ if doc:
                             with c_txt:
                                 # 埋入隱形錨點供 CSS 辨識
                                 st.markdown('<span class="inline-row-txt" style="display:none;"></span>', unsafe_allow_html=True)
-                                text_input = st.text_input("✍️ 文字（預設空白；要壓日期就自己打，例如 6/30）", value="", placeholder=default_coupon_txt, key=f"txt_{slot_id}")
+                                # label 要短：跟右邊顏色欄並排時，長 label 會被壓到重疊
+                                text_input = st.text_input("✍️ 文字", value="",
+                                                           placeholder=f"例如 {default_coupon_txt}",
+                                                           key=f"txt_{slot_id}",
+                                                           help="預設空白＝不壓任何文字；要壓日期就自己打，例如 6/30")
                             with c_col:
                                 text_color = st.color_picker("🎨 顏色", def_color, key=f"col_{slot_id}")
 
@@ -3136,7 +3145,8 @@ if doc:
                                 st.session_state[f"cvnonce_{_sid}"] = int(st.session_state.get(f"cvnonce_{_sid}", 0)) + 1
 
                             st.session_state[_szkey] = int(font_size)
-                            st.slider("📐 文字大小", 10, 200, key=_szkey, on_change=_on_size_change)
+                            # label 只留兩個字：全站 CSS 把拉桿 label 鎖成 60px 並排，長 label 會疊在數值上
+                            st.slider("大小", 10, 200, key=_szkey, on_change=_on_size_change)
                             _cent_c1, _cent_c2 = st.columns(2)
                             _cent_c1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
                             _do_center = _cent_c1.button("🎯 水平置中", key=f"ndcx_{slot_id}", use_container_width=True, help="文字移到圖片正中間（左右）")
@@ -3195,7 +3205,6 @@ if doc:
                                     _txt_mem = (text_input or "").replace("|", "｜")
                                     _save_kv(ws_cfg, f"coupset_{slot_id}",
                                              f"{x_pos}|{y_pos}|{font_size}|{rotation_angle}|{text_color}|{_txt_mem}")
-                                    st.session_state.pop(f"_hqimg_{slot_id}", None)
 
                                 st.session_state.pop("_decoded_imgs", None)
                                 st.session_state.refresh_cfg = True

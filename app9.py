@@ -1702,8 +1702,11 @@ def _batch_worker(job, imgs, opts):
 
             # ☁️ 備份原圖到 Google Drive 資料夾，檔名＝「日期 評價圖-規格」
             if opts.get("save_to_drive"):
+                # 檔名＝「日期 評價圖-規格_帳號」：同一款規格常有十幾位客人，
+                # 只用規格會全部同名分不出來，所以末尾補上帳號。
                 _spec_for_name = _review_spec(rev) or (spec if spec and spec != "無" else acc)
-                _fname = f"{now.strftime('%Y%m%d')} 評價圖-{_safe_filename(_spec_for_name)}.png"
+                _fname = (f"{now.strftime('%Y%m%d')} 評價圖-{_safe_filename(_spec_for_name)}"
+                          f"_{_safe_filename(acc)}.png")
                 ok_d, info_d = upload_img_to_drive(img.copy(), _fname)
                 if ok_d:
                     job["drive_ok"] = job.get("drive_ok", 0) + 1

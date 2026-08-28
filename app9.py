@@ -13,6 +13,7 @@ import urllib.request
 import threading
 import calendar
 import re
+import difflib
 import math
 import json
 
@@ -682,6 +683,16 @@ def _strip_md(text):
 # ==========================================
 QA_SHEET = "客服問題庫"
 QA_COLS = ["ID", "分類", "問題標題", "客戶問題範例", "建議回覆範本", "關鍵字", "更新時間"]
+
+
+def qa_reply_height(txt, base=420, per_line=26, cap=1400):
+    """回覆框高度：依內容行數自動加長，盡量一眼看到完整內容好編輯（最高 cap 之後才出現捲軸）。
+    長行也算進去（一行約 34 個字換行一次）。"""
+    t = str(txt or "")
+    lines = 0
+    for ln in t.split("\n"):
+        lines += max(1, (len(ln) // 34) + 1)
+    return int(max(base, min(cap, 120 + lines * per_line)))
 # 內建預設分類（第一次用就有東西可選）；之後可在介面「管理分類」自行增刪改，改完存雲端。
 QA_DEFAULT_CATS = ["物流出貨", "退換貨", "商品規格", "付款發票", "折價券優惠",
                    "售後保固", "訂單修改", "客訴負評", "其他"]
@@ -1076,25 +1087,33 @@ def section_block(emoji, title, desc=""):
 def upload_img_to_drive(img, filename, folder_id=DRIVE_FOLDER_ID):
     """把 PIL 圖片透過 Apps Script 中轉，以使用者本人身分存進 Drive 資料夾；
     回傳 (True, 連結) 或 (False, 錯誤訊息)。"""
-    try:
-        import requests
-        if not APPS_SCRIPT_DRIVE_URL:
-            return False, "尚未設定 Apps Script 中轉網址"
-        buf = BytesIO()
-        img.convert("RGB").save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        r = requests.post(APPS_SCRIPT_DRIVE_URL, json={
-            "secret": APPS_SCRIPT_DRIVE_SECRET,
-            "filename": filename,
-            "mimeType": "image/png",
-            "dataBase64": b64,
-        }, timeout=40)
-        data = r.json()
-        if data.get("ok"):
-            return True, data.get("url")
-        return False, data.get("err", "上傳失敗")
-    except Exception as e:
-        return False, str(e)
+    import requests
+    if not APPS_SCRIPT_DRIVE_URL:
+        return False, "尚未設定 Apps Script 中轉網址（雲端要在 secrets 設 apps_script_drive_url／本機要有 drive_config.txt）"
+    # 📉 先縮到 1600px、轉 JPEG：實測 1.2MB 的 PNG 會變 200KB 左右，上傳快很多也不容易逾時
+    im = img.convert("RGB")
+    im.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+    buf = BytesIO()
+    im.save(buf, format="JPEG", quality=92, optimize=True)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    fn = re.sub(r"\.(png|jpeg|jpg)$", "", str(filename), flags=re.I) + ".jpg"
+    last = ""
+    for attempt in range(2):        # 失敗自動重試一次（網路偶發、Apps Script 忙碌）
+        try:
+            r = requests.post(APPS_SCRIPT_DRIVE_URL, json={
+                "secret": APPS_SCRIPT_DRIVE_SECRET,
+                "filename": fn,
+                "mimeType": "image/jpeg",
+                "dataBase64": b64,
+            }, timeout=90)
+            data = r.json()
+            if data.get("ok"):
+                return True, data.get("url")
+            last = str(data.get("err", "上傳失敗"))
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        time.sleep(2)
+    return False, last or "上傳失敗"
 
 def _review_spec(content):
     """從評價內容抓出『規格』。整串都算規格（含中括號與顏色），不是只有【】內的字。
@@ -1432,6 +1451,320 @@ def trigger_order_save(url, active_slots):
     order_str = ",".join(map(str, active_slots))
     threading.Thread(target=threaded_update_order, args=(creds_dict, url, order_str)).start()
 
+BATCH_SYS_PROMPT = """
+                    你是一個專業的蝦皮賣場客服主管 Sharon。請精準辨識圖片中的 [ACCOUNT] 帳號與 [REVIEW] 內容。
+                    
+                    【極度嚴格規定】
+                    1. 字數與行數「必須」與下方範例長度一致，絕不可自行長篇大論！
+                    2. 務必使用分段與換行符號，保持版面清爽舒適。
+                    3. 完全模仿 BearJoy Sharon 的溫暖語氣，並加上適當的 Emoji。
+                    4. 【絕對要客製化】：賣場回覆與私訊回覆中，必須「100% 精準引用」客人實際寫出的優點關鍵字。
+                    
+                    [範例評價]：非常好用，厚的材質...回購第二次
+                    [範例賣場回覆]：
+                    親愛的顧客您好，
+
+                    感謝您的五星好評與再次回購！🌟
+                    很高興厚實的材質能讓您覺得方便。👶
+                    謝謝您肯定我們的品質，
+                    非常珍貴像您這樣用心回饋的好顧客！❤️
+                    期待未來能繼續為您服務。
+
+                    —— BearJoy Sharon
+
+                    [範例私訊回覆]：
+                    親愛的 (客戶帳號)，
+
+                    感謝您撥空寫下如此詳細的評價！
+                    看到您滿意我們的厚實材質與實用性，我們非常感動。🥰
+                    為了表達萬分謝意，已將您列入VIP客戶名單！✨
+                    未來若有專屬優惠定會第一時間發送給您。🎁
+                    再次感謝支持！
+
+                    —— BearJoy Sharon
+
+                    請依照以下標籤輸出：
+                    [ACCOUNT]
+                    (客戶帳號)
+                    [REVIEW]
+                    (評價內容)
+                    [SPEC]
+                    (顧客購買的規格/款式：蝦皮評價幾乎都會在帳號下方或評價區顯示「規格」「分類」或商品變體，務必逐字「完整讀出」，例如「[三層款 可拆卸 十合一]黑色」「[旗艦款 壓縮 七合一]」「筷子瀝水架三格掛勾款[304接水盤]」等，含中括號與顏色都要。先在整張圖找有沒有「規格」「分類」字樣，找到就照抄。只有當圖片真的完全找不到任何規格/分類/款式字樣時，才寫「無」。不可漏抓。)
+                    [RTIME]
+                    (這則評價本身的日期時間：蝦皮評價的帳號旁或評價下方會顯示，例如「2026-08-20 14:32」或「2026-08-20」。照原樣抄出數字即可，只有真的找不到才寫「無」。)
+                    [PUBLIC]
+                    (賣場評價回覆)
+                    [PRIVATE]
+                    (私訊回覆)
+"""
+
+# ==========================================
+# 🏃 批次評價「背景執行」引擎（手機滑掉畫面／螢幕暗掉也不會中斷）
+#    原因：Streamlit 每次執行都綁在瀏覽器連線上，手機把分頁切走或螢幕關掉、連線一斷，
+#          正在跑的那次執行就會被中止 → AI 寫到一半就沒了。
+#    解法：把整批工作丟進背景執行緒（裡面完全不碰 st.*，所以連線斷了照跑），
+#          進度與結果寫進 batch_job_store()（@st.cache_resource＝整個程式共用，換頁、重新整理都還在），
+#          畫面只負責每 2 秒讀一次進度，顯示「已完成 X／共 Y 筆，還剩 Z 筆」。
+# ==========================================
+
+def _rev_norm(t):
+    """評價內容正規化：拿掉「規格：」字樣與所有空白標點，只留文字本體。
+    AI 每次讀同一張圖，標點與規格前綴常常不一樣，正規化後才比得出是同一則。"""
+    t = re.sub(r"規格\s*[:：]", "", str(t))
+    return re.sub(r"[\s\W_]+", "", t, flags=re.UNICODE)
+
+
+def _rtime_norm(t):
+    """評價時間正規化：只留數字（2026-08-20 14:32 → 202608201432），格式寫法不同也比得出來。"""
+    return re.sub(r"\D", "", str(t or ""))
+
+
+def _same_review(a_rev, a_rt, b_rev, b_rt, thr=0.8):
+    """是不是同一則評價：兩邊都讀得到評價時間就直接比時間（最準）；
+    否則退回比內容相似度（門檻 0.8）。"""
+    ra, rb = _rtime_norm(a_rt), _rtime_norm(b_rt)
+    if len(ra) >= 8 and len(rb) >= 8:
+        return ra == rb
+    if not a_rev or not b_rev:
+        return False
+    return difflib.SequenceMatcher(None, a_rev, b_rev).ratio() >= thr
+
+
+@st.cache_resource(show_spinner=False)
+def batch_job_store():
+    """跨工作階段共用的批次任務儲存區：程式沒關就在，手機切走再回來也讀得到同一份進度。"""
+    return {"lock": threading.Lock(), "job": None}
+
+
+def batch_job_get():
+    return batch_job_store().get("job")
+
+
+def _batch_open_doc(creds_dict, sheet_url):
+    """背景執行緒專用：自己開一條 Google 試算表連線（不可共用畫面那條快取連線）。"""
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    if creds_dict:
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    else:
+        creds = ServiceAccountCredentials.from_json_keyfile_name(
+            os.path.join(os.path.dirname(__file__), "google_key.json"), scope)
+    return gspread.authorize(creds).open_by_url(sheet_url)
+
+
+def _batch_sync_cloud(job, doc_bg, results):
+    """把整批結果寫進「回覆紀錄」並更新 VIP 名單；同時把雲端列號回填給畫面（供逐筆改寫用）。"""
+    try:
+        ws_history = get_or_create_ws(doc_bg, "回覆紀錄")
+        existing = ws_history.get_all_values()
+        header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆", "評價時間"]
+        if len(existing) == 0:
+            ws_history.append_row(header)
+            existing = [header]
+        elif len(existing[0]) < 6:
+            # 舊表只有 5 欄 → 補上第 6 欄「評價時間」（舊資料留白，不影響既有內容）
+            try:
+                ws_history.update_cell(1, 6, "評價時間")
+            except Exception:
+                pass
+
+        # 🔁 去重（升級版）：同一帳號 ＋ 同一個「評價時間」＝同一則評價；讀不到時間才比內容相似度。
+        #    命中就【覆蓋更新原本那一列】（後跑的是最終版），不再新增重複列，
+        #    VIP 互動次數也不會被重複加。
+        _idx = {}      # 帳號 → [(列號或 None, 正規化內容, 評價時間)]
+        for _r0, _rv in enumerate(existing[1:], start=2):
+            if len(_rv) > 2:
+                _idx.setdefault(str(_rv[1]).strip().lower(), []).append(
+                    (_r0, _rev_norm(_rv[2]), (_rv[5] if len(_rv) > 5 else "")))
+        new_rows, dup_count, upd_count, row_map = [], 0, 0, {}
+        for row in results:
+            _acc_k = str(row[1]).strip().lower()
+            _nv, _nt = _rev_norm(row[2]), (row[5] if len(row) > 5 else "")
+            _hit, _self_dup = None, False
+            for _rn, _ov, _ot in _idx.get(_acc_k, []):
+                if _same_review(_ov, _ot, _nv, _nt):
+                    if _rn is None:
+                        _self_dup = True     # 同一批裡自己重複（同一則評價上傳了兩張截圖）
+                    else:
+                        _hit = _rn
+                    break
+            if _self_dup:
+                dup_count += 1
+                continue
+            if _hit:
+                try:
+                    ws_history.update(f"A{_hit}:F{_hit}", [row])
+                    upd_count += 1
+                except Exception:
+                    dup_count += 1
+                row_map[(str(row[1]).strip(), str(row[2]).strip())] = _hit
+                continue
+            _idx.setdefault(_acc_k, []).append((None, _nv, _nt))
+            new_rows.append(row)
+        if new_rows:
+            _first_new = len(existing) + 1      # append 前的總列數＋1＝第一筆新資料的列號
+            ws_history.append_rows(new_rows)
+            for _i, _nr in enumerate(new_rows):
+                row_map[(str(_nr[1]).strip(), str(_nr[2]).strip())] = _first_new + _i
+        for it in list(job.get("items", [])):
+            it["row"] = row_map.get((str(it["acc"]).strip(), str(it["rev"]).strip()))
+
+        ws_vip = get_or_create_ws(doc_bg, "VIP名單")
+        vip_vals = ws_vip.get_all_values()
+        if len(vip_vals) == 0:
+            v_header = ["客戶帳號", "首次互動", "最後互動", "互動次數"]
+            ws_vip.append_row(v_header)
+            vip_vals = [v_header]
+        v_header = vip_vals[0]
+        vip_records = [dict(zip(v_header, r)) for r in vip_vals[1:]]
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        for row in new_rows:
+            account = row[1]
+            if account == "未知":
+                continue
+            fi = next((i for i, r in enumerate(vip_records)
+                       if str(r.get('客戶帳號', '')) == account), -1)
+            if fi != -1:
+                ws_vip.update_cell(fi + 2, 3, date_str)
+                ws_vip.update_cell(fi + 2, 4, int(vip_records[fi].get('互動次數', 0)) + 1)
+            else:
+                ws_vip.append_row([account, date_str, date_str, 1])
+        try:
+            ws_vip.format("A:A", {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP"})
+            ws_vip.format("B:D", {"horizontalAlignment": "RIGHT", "verticalAlignment": "TOP"})
+        except Exception:
+            pass
+        msg = f"🎉 完美同步！新增 {len(new_rows)} 筆紀錄"
+        if upd_count:
+            msg += f"｜{upd_count} 筆是同一則評價重跑，已直接更新成最新版本（不新增重複列）"
+        if dup_count:
+            msg += f"｜略過 {dup_count} 筆重複評價，不重複計算互動次數"
+        job["msg"] = msg
+    except Exception as e:
+        job["notes"].append(f"⚠️ 雲端同步失敗（結果還在畫面上）：{str(e)[:120]}")
+
+
+def _batch_worker(job, imgs, opts):
+    """背景執行緒本體：一張一張叫 AI、存素材、備份 Drive，最後整批寫回雲端。全程不碰 st.*。"""
+    lock = batch_job_store()["lock"]
+    try:
+        prompt_base = BATCH_SYS_PROMPT + ("\n注意：此為二回購老客，請加入朋友般的尊榮感。"
+                                          if opts.get("is_vip") else "")
+        if opts.get("batch_ins"):
+            prompt_base += ("\n【本批額外要求（務必遵守）】：" + opts["batch_ins"] +
+                            "\n請把這個要求自然融入 [PUBLIC] 與 [PRIVATE] 兩段回覆中，"
+                            "不要另外條列說明，也不可以自行新增原本沒有的優惠或承諾。")
+        doc_bg = None
+        try:
+            doc_bg = _batch_open_doc(opts.get("creds_dict"), opts.get("sheet_url"))
+        except Exception as e:
+            job["notes"].append(f"⚠️ 雲端連線失敗，這批只會顯示在畫面、不寫回雲端：{str(e)[:90]}")
+
+        results = []
+        for i, (fname, img) in enumerate(imgs):
+            job["current_name"] = fname
+            # ✨ 第一張立即處理，之後每張間隔 4 秒，避免免費版流量限制
+            if i > 0:
+                time.sleep(4)
+            res_text, usage = gemini_call_costed(opts["api_key"], [prompt_base, img], opts["model"])
+            if usage:
+                job["cost"] = job.get("cost", 0.0) + usage.get("cost", 0.0)
+                job["last_usage"] = usage
+            if not res_text:
+                job["notes"].append(f"⚠️ 檔案 {fname} 處理失敗（AI 沒回應），已略過。")
+                job["done"] = i + 1
+                continue
+
+            acc = _extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]) or "未知"
+            rev = _extract_section(res_text, "[REVIEW]", ["[SPEC]", "[PUBLIC]"]) or "解析失敗"
+            spec = (_extract_section(res_text, "[SPEC]", ["[RTIME]", "[PUBLIC]"]) or "").strip()
+            # 🕒 評價本身的日期時間：拿它當「這則評價的身分證」來去重，比比對文字準
+            rtime = (_extract_section(res_text, "[RTIME]", ["[PUBLIC]"]) or "").strip()
+            if rtime in ("無", "None", "-"):
+                rtime = ""
+            pub = _extract_section(res_text, "[PUBLIC]", ["[PRIVATE]"]) or "解析失敗"
+            priv = _extract_section(res_text, "[PRIVATE]", []) or "解析失敗"
+            if spec and spec != "無" and rev != "解析失敗" and not rev.startswith("規格"):
+                rev = f"規格：{spec}｜{rev}"
+            if priv != "解析失敗" and opts.get("repurchase_code"):
+                offer_txt = f"（{opts['repurchase_offer']}）" if opts.get("repurchase_offer") else ""
+                priv = priv + (f"\n\nP.S. 送您專屬回購碼 👉 {opts['repurchase_code']}{offer_txt}"
+                               f"\n下次下單輸入即可享優惠，期待再為您服務 🎁")
+            now = datetime.now()
+
+            # 💾 保存原始評價截圖到雲端，供日後做素材
+            if opts.get("save_screenshots") and doc_bg is not None:
+                try:
+                    ws_mat = get_or_create_ws(doc_bg, "評價截圖素材")
+                    ws_mat.append_row([f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}|||{_review_spec(rev)}"]
+                                      + img_to_chunks_compact(img.copy()))
+                except Exception as e:
+                    job["notes"].append(f"⚠️ {acc} 的截圖素材保存略過（不影響回覆）：{str(e)[:80]}")
+
+            # ☁️ 備份原圖到 Google Drive 資料夾，檔名＝「日期 評價圖-規格」
+            if opts.get("save_to_drive"):
+                _spec_for_name = _review_spec(rev) or (spec if spec and spec != "無" else acc)
+                _fname = f"{now.strftime('%Y%m%d')} 評價圖-{_safe_filename(_spec_for_name)}.png"
+                ok_d, info_d = upload_img_to_drive(img.copy(), _fname)
+                if ok_d:
+                    job["drive_ok"] = job.get("drive_ok", 0) + 1
+                else:
+                    job["drive_fail"] = job.get("drive_fail", 0) + 1
+                    # 失敗原因存在任務裡（不是只印在畫面），連線斷掉也不會不見
+                    job["notes"].append(f"⚠️ {acc}（{_fname}）未能備份到 Drive：{str(info_d)[:110]}")
+
+            with lock:
+                job["items"].append({"acc": acc, "rev": rev, "pub": pub, "priv": priv,
+                                     "rtime": rtime, "row": None})
+            results.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv, rtime])
+            job["done"] = i + 1
+
+        if doc_bg is not None and results:
+            _batch_sync_cloud(job, doc_bg, results)
+        job["finished"] = datetime.now().strftime("%H:%M:%S")
+        job["status"] = "done"
+    except Exception as e:
+        job["error"] = str(e)
+        job["status"] = "error"
+
+
+def batch_job_start(imgs, opts):
+    """建立一個新的批次任務，丟到背景執行緒跑，立刻回傳（畫面不會被卡住）。"""
+    store = batch_job_store()
+    job = {"id": datetime.now().strftime("%Y%m%d%H%M%S"), "status": "running",
+           "drive_ok": 0, "drive_fail": 0,
+           "total": len(imgs), "done": 0, "current_name": "", "items": [], "notes": [],
+           "msg": "", "error": "", "cost": 0.0, "last_usage": None,
+           "started": datetime.now().strftime("%H:%M:%S"), "finished": ""}
+    store["job"] = job
+    threading.Thread(target=_batch_worker, args=(job, imgs, opts), daemon=True).start()
+    return job
+
+
+@st.fragment(run_every=2)
+def render_batch_progress():
+    """每 2 秒自動更新的進度區：顯示到第幾筆、還剩幾筆；已跑完的先秀出來可以先複製。"""
+    job = batch_job_get()
+    if not job:
+        return
+    total, done = int(job.get("total") or 0), int(job.get("done") or 0)
+    if job.get("status") != "running":
+        st.rerun(scope="app")       # 跑完 → 整頁重跑，改由下方結果區呈現
+        return
+    st.progress(min(1.0, done / total) if total else 0.0,
+                text=f"🏃 AI 撰寫中… 已完成 {done} / 共 {total} 筆，還剩 {max(0, total - done)} 筆")
+    st.caption(f"⏱ {job.get('started','')} 開始｜正在處理：{job.get('current_name','')}")
+    st.info("📱 可以關螢幕或切去別的 App，這批會在背景繼續跑；回來重開這頁就會接上進度。")
+    for _n in list(job.get("notes", []))[-3:]:
+        st.caption(_n)
+    for _i, it in enumerate(list(job.get("items", []))):
+        with st.expander(f"✅ 第 {_i + 1} 筆　客戶帳號：{it['acc']}", expanded=False):
+            st.markdown(f"**📝 原始評價內容:** {it['rev']}")
+            st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
+            st.code(it["pub"], language="text")
+            st.markdown("**💌 私訊回覆 (點擊右上角複製):**")
+            st.code(it["priv"], language="text")
+
+
 # ==========================================
 # 4. 側邊欄 (🛡️ 電腦/手機雙平台企業級資安防護版)
 # ==========================================
@@ -1557,190 +1890,80 @@ if doc:
                 top_success_msg = st.empty()
                 cards_container = st.container()
                 
-                if start_btn and files and api_key:
-                    results_to_cloud = []
-
-                    system_prompt = """
-                    你是一個專業的蝦皮賣場客服主管 Sharon。請精準辨識圖片中的 [ACCOUNT] 帳號與 [REVIEW] 內容。
-                    
-                    【極度嚴格規定】
-                    1. 字數與行數「必須」與下方範例長度一致，絕不可自行長篇大論！
-                    2. 務必使用分段與換行符號，保持版面清爽舒適。
-                    3. 完全模仿 BearJoy Sharon 的溫暖語氣，並加上適當的 Emoji。
-                    4. 【絕對要客製化】：賣場回覆與私訊回覆中，必須「100% 精準引用」客人實際寫出的優點關鍵字。
-                    
-                    [範例評價]：非常好用，厚的材質...回購第二次
-                    [範例賣場回覆]：
-                    親愛的顧客您好，
-
-                    感謝您的五星好評與再次回購！🌟
-                    很高興厚實的材質能讓您覺得方便。👶
-                    謝謝您肯定我們的品質，
-                    非常珍貴像您這樣用心回饋的好顧客！❤️
-                    期待未來能繼續為您服務。
-
-                    —— BearJoy Sharon
-
-                    [範例私訊回覆]：
-                    親愛的 (客戶帳號)，
-
-                    感謝您撥空寫下如此詳細的評價！
-                    看到您滿意我們的厚實材質與實用性，我們非常感動。🥰
-                    為了表達萬分謝意，已將您列入VIP客戶名單！✨
-                    未來若有專屬優惠定會第一時間發送給您。🎁
-                    再次感謝支持！
-
-                    —— BearJoy Sharon
-
-                    請依照以下標籤輸出：
-                    [ACCOUNT]
-                    (客戶帳號)
-                    [REVIEW]
-                    (評價內容)
-                    [SPEC]
-                    (顧客購買的規格/款式：蝦皮評價幾乎都會在帳號下方或評價區顯示「規格」「分類」或商品變體，務必逐字「完整讀出」，例如「[三層款 可拆卸 十合一]黑色」「[旗艦款 壓縮 七合一]」「筷子瀝水架三格掛勾款[304接水盤]」等，含中括號與顏色都要。先在整張圖找有沒有「規格」「分類」字樣，找到就照抄。只有當圖片真的完全找不到任何規格/分類/款式字樣時，才寫「無」。不可漏抓。)
-                    [PUBLIC]
-                    (賣場評價回覆)
-                    [PRIVATE]
-                    (私訊回覆)
-                    """
-                    
-                    for file_idx, file in enumerate(files):
-                        with preview_area:
-                             img = Image.open(file)
-                             st.image(img, caption=f"處理中: {file.name}", width=300)
-
-                        with st.spinner(f"🏃‍♀️ AI 正在為您撰寫..."):
-                            current_prompt = system_prompt + ("\n注意：此為二回購老客，請加入朋友般的尊榮感。" if is_vip_check else "")
-                            # ✍️ 本批加強指示：融進賣場回覆與私訊回覆，但不可自行新增沒有的優惠承諾
-                            if (batch_ins or "").strip():
-                                current_prompt += ("\n【本批額外要求（務必遵守）】：" + batch_ins.strip() +
-                                                   "\n請把這個要求自然融入 [PUBLIC] 與 [PRIVATE] 兩段回覆中，"
-                                                   "不要另外條列說明，也不可以自行新增原本沒有的優惠或承諾。")
-                            # ✨ 速度優化：第一張立即處理，之後每張間隔 4 秒，避免免費版流量限制；
-                            # 重試/退避邏輯統一交給 gemini_generate()，不再每次嘗試前都空等 3 秒。
-                            if file_idx > 0:
-                                time.sleep(4)
-                            res_text, _usage = gemini_call_costed(
-                                api_key, [current_prompt, img],
-                                st.session_state.get("batch_model", GEMINI_DEFAULT))
-                            ai_track_cost(_usage)
-
-                            if not res_text:
-                                st.error(f"檔案 {file.name} 處理失敗。")
-                                continue
-
-                            # ✨ 穩定性：用安全解析，AI 少打一個標籤也不會整個崩潰
-                            acc = _extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]) or "未知"
-                            rev = _extract_section(res_text, "[REVIEW]", ["[SPEC]", "[PUBLIC]"]) or "解析失敗"
-                            spec = (_extract_section(res_text, "[SPEC]", ["[PUBLIC]"]) or "").strip()
-                            pub = _extract_section(res_text, "[PUBLIC]", ["[PRIVATE]"]) or "解析失敗"
-                            priv = _extract_section(res_text, "[PRIVATE]", []) or "解析失敗"
-                            # 📌 把購買規格併進「原始評價內容」開頭，後續做好評素材就會自動帶到規格
-                            if spec and spec != "無" and rev != "解析失敗" and not rev.startswith("規格"):
-                                rev = f"規格：{spec}｜{rev}"
-                            # 🎁 功能1：私訊結尾自動附上回購優惠碼，把「感謝」變成「再買一次」
-                            if priv != "解析失敗" and repurchase_code.strip():
-                                offer_txt = f"（{repurchase_offer.strip()}）" if repurchase_offer.strip() else ""
-                                priv = priv + f"\n\nP.S. 送您專屬回購碼 👉 {repurchase_code.strip()}{offer_txt}\n下次下單輸入即可享優惠，期待再為您服務 🎁"
-                            now = datetime.now()
-
-                            # 💾 功能6：保存原始評價截圖到雲端，供日後做素材
-                            if save_screenshots:
-                                try:
-                                    ws_mat = get_or_create_ws(doc, "評價截圖素材")
-                                    ws_mat.append_row([f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}|||{_review_spec(rev)}"] + img_to_chunks_compact(img.copy()))
-                                except Exception as e:
-                                    st.caption(f"⚠️ 此筆截圖素材保存略過（不影響回覆）：{e}")
-
-                            # ☁️ 備份原圖到 Google Drive 資料夾，檔名＝「日期 評價圖-規格」
-                            if save_to_drive:
-                                _spec_for_name = _review_spec(rev) or (spec if spec and spec != "無" else acc)
-                                _fname = f"{now.strftime('%Y%m%d')} 評價圖-{_safe_filename(_spec_for_name)}.png"
-                                ok_d, info_d = upload_img_to_drive(img.copy(), _fname)
-                                if not ok_d:
-                                    st.caption(f"⚠️ 此筆未能備份到 Drive（不影響回覆）：{str(info_d)[:90]}")
-                            
-                            with cards_container:
-                                with st.expander(f"✨ 客戶帳號：{acc}", expanded=True):
-                                    st.markdown(f"**📝 原始評價內容:** {rev}")
-                                    st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
-                                    st.code(pub, language="text")
-                                    st.markdown("**💌 私訊回覆 (點擊右上角複製):**")
-                                    st.code(priv, language="text")
-                            
-                            results_to_cloud.append([now.strftime("%Y-%m-%d %H:%M:%S"), acc, rev, pub, priv])
-
-                    # 💰 本批 AI 花費（本次開啟累計）顯示在結果區
-                    with cards_container:
-                        ai_render_cost(st.session_state.get("batch_model", GEMINI_DEFAULT))
-
-                    _row_map = {}      # (帳號, 評價內容) → 雲端列號，供「跑完再請 AI 加強」寫回同一列
-                    if doc and results_to_cloud:
-                        try:
-                            ws_history = get_or_create_ws(doc, "回覆紀錄")
-                            existing = ws_history.get_all_values()
-                            if len(existing) == 0:
-                                header = ["紀錄時間", "客戶帳號", "原始評價內容", "賣場評價回覆", "VIP私訊回覆"]
-                                ws_history.append_row(header)
-                                existing = [header]
-                            # 🔁 功能5：用 (帳號, 評價內容) 去重，同一筆評價不重複計算
-                            seen_pairs = set((str(r[1]).strip(), str(r[2]).strip()) for r in existing[1:] if len(r) > 2)
-                            new_rows, dup_count = [], 0
-                            for row in results_to_cloud:
-                                pair = (str(row[1]).strip(), str(row[2]).strip())
-                                if pair in seen_pairs:
-                                    dup_count += 1
-                                    continue
-                                seen_pairs.add(pair)
-                                new_rows.append(row)
-                            if new_rows:
-                                _first_new = len(existing) + 1   # append 前的總列數＋1＝第一筆新資料的列號
-                                ws_history.append_rows(new_rows)
-                                for _i, _nr in enumerate(new_rows):
-                                    _row_map[(str(_nr[1]).strip(), str(_nr[2]).strip())] = _first_new + _i
-
-                            ws_vip = get_or_create_ws(doc, "VIP名單")
-                            # ✨ 速度優化：原本對 VIP 名單讀了兩次（get_all_values + get_all_records），
-                            # 改成只讀一次再自行組成紀錄，少一趟雲端來回。
-                            vip_vals = ws_vip.get_all_values()
-                            if len(vip_vals) == 0:
-                                v_header = ["客戶帳號", "首次互動", "最後互動", "互動次數"]
-                                ws_vip.append_row(v_header)
-                                vip_vals = [v_header]
-                            v_header = vip_vals[0]
-                            vip_records = [dict(zip(v_header, r)) for r in vip_vals[1:]]
-                            date_str = datetime.now().strftime("%Y-%m-%d")
-
-                            for row in new_rows:
-                                account = row[1]
-                                if account == "未知": continue
-                                found_index = next((i for i, r in enumerate(vip_records) if str(r.get('客戶帳號', '')) == account), -1)
-                                if found_index != -1:
-                                    ws_vip.update_cell(found_index + 2, 3, date_str)
-                                    ws_vip.update_cell(found_index + 2, 4, int(vip_records[found_index].get('互動次數', 0)) + 1)
-                                else:
-                                    ws_vip.append_row([account, date_str, date_str, 1])
-                            # 📐 VIP 名單對齊：帳號靠左；首次/最後互動日期、互動次數靠右（統一，不再忽左忽右）
+                # ▶️ 按下「開始處理」：整批交給背景執行緒，畫面只顯示進度
+                #    （這樣手機把畫面滑掉、螢幕暗掉、甚至換頁，AI 都會繼續寫完。）
+                if start_btn:
+                    _running = (batch_job_get() or {}).get("status") == "running"
+                    if _running:
+                        st.warning("已經有一批正在背景處理中，等它跑完再開新的一批。")
+                    elif not files:
+                        st.warning("請先在①上傳好評截圖。")
+                    elif not api_key:
+                        st.warning("尚未設定 API 金鑰。")
+                    else:
+                        # 圖片要在這裡就整份讀進記憶體：背景執行緒讀不到瀏覽器上傳的檔案物件
+                        _imgs = []
+                        for _f in files:
                             try:
-                                ws_vip.format("A:A", {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP"})
-                                ws_vip.format("B:D", {"horizontalAlignment": "RIGHT", "verticalAlignment": "TOP"})
-                            except Exception:
-                                pass
-                            msg = f"🎉 完美同步！新增 {len(new_rows)} 筆紀錄"
-                            if dup_count:
-                                msg += f"（已自動略過 {dup_count} 筆重複評價，不重複計算互動次數）"
-                            st.session_state["batch_msg"] = msg
-                        except Exception as e:
-                            st.error(f"雲端同步失敗：請確認試算表格式是否正確。({e})")
+                                _im = Image.open(_f)
+                                _im.load()
+                                _imgs.append((_f.name, _im.convert("RGB")))
+                            except Exception as _e:
+                                st.caption(f"⚠️ {_f.name} 讀不進來，已略過：{_e}")
+                        _creds = None
+                        try:
+                            if "type" in st.secrets:
+                                _creds = dict(st.secrets)
+                        except Exception:
+                            pass
+                        if _imgs:
+                            st.session_state.pop("batch_results", None)
+                            st.session_state.pop("batch_msg", None)
+                            batch_job_start(_imgs, {
+                                "api_key": api_key,
+                                "model": st.session_state.get("batch_model", GEMINI_DEFAULT),
+                                "is_vip": is_vip_check,
+                                "batch_ins": (batch_ins or "").strip(),
+                                "repurchase_code": repurchase_code.strip(),
+                                "repurchase_offer": repurchase_offer.strip(),
+                                "save_screenshots": save_screenshots,
+                                "save_to_drive": save_to_drive,
+                                "creds_dict": _creds,
+                                "sheet_url": sheet_url,
+                            })
+                            st.rerun()
 
-                    # 📋 把這批結果留下來：重跑不會消失，而且每一筆都能再請 AI 加強
-                    if results_to_cloud:
+                # 🏃 背景進度區：每 2 秒自己更新一次；跑完自動換成下方結果區
+                _job = batch_job_get()
+                if _job and _job.get("status") == "running":
+                    render_batch_progress()
+                elif _job and _job.get("status") in ("done", "error"):
+                    if not _job.get("_merged"):
+                        _job["_merged"] = True
                         st.session_state["batch_results"] = [
-                            {"acc": _r[1], "rev": _r[2], "pub": _r[3], "priv": _r[4],
-                             "row": _row_map.get((str(_r[1]).strip(), str(_r[2]).strip()))}
-                            for _r in results_to_cloud]
-                        st.rerun()
+                            {"acc": it["acc"], "rev": it["rev"], "pub": it["pub"],
+                             "priv": it["priv"], "row": it.get("row")}
+                            for it in _job.get("items", [])]
+                        if _job.get("msg"):
+                            st.session_state["batch_msg"] = _job["msg"]
+                        if _job.get("cost"):
+                            st.session_state["ai_cost_total"] = \
+                                st.session_state.get("ai_cost_total", 0.0) + _job["cost"]
+                        if _job.get("last_usage"):
+                            st.session_state["ai_last_usage"] = _job["last_usage"]
+                    with cards_container:
+                        _fin = _job.get("finished", "")
+                        st.caption(f"🏁 這批 {_job.get('total', 0)} 筆已跑完"
+                                   f"（{_job.get('started','')} → {_fin}），共成功 "
+                                   f"{len(_job.get('items', []))} 筆。")
+                        if _job.get("drive_ok") or _job.get("drive_fail"):
+                            _dm = (f"☁️ Drive 備份：成功 {_job.get('drive_ok', 0)} 筆"
+                                   f"／失敗 {_job.get('drive_fail', 0)} 筆")
+                            (st.warning if _job.get("drive_fail") else st.caption)(_dm)
+                        if _job.get("status") == "error":
+                            st.error(f"這批中途出錯：{_job.get('error', '')}")
+                        for _n in _job.get("notes", []):
+                            st.caption(_n)
 
                 # 📋 上一批的結果（重跑也不會不見）：可逐筆下指示請 AI 改寫，改完同步寫回雲端那一列
                 _bres = st.session_state.get("batch_results") or []
@@ -1779,9 +2002,75 @@ if doc:
                                 st.caption(f"⚠️ 寫回雲端失敗（畫面已更新）：{e}")
                         st.rerun()
 
+                    def _batch_fix_account(i):
+                        """✏️ 當場更正 AI 認錯的客戶帳號：同步改雲端「回覆紀錄」那一列的帳號，
+                        並把 VIP 名單的互動次數從錯帳號搬到正確帳號（錯的那筆歸零就刪掉）。"""
+                        it = st.session_state["batch_results"][i]
+                        old_acc = str(it.get("acc", "")).strip()
+                        new_acc = (st.session_state.get(f"br_acc_{i}", "") or "").strip()
+                        if not new_acc:
+                            st.warning("請先填正確的客戶帳號。")
+                            return
+                        if new_acc == old_acc:
+                            st.info("帳號沒有變更。")
+                            return
+                        st.session_state["batch_results"][i]["acc"] = new_acc
+                        if not (doc and it.get("row")):
+                            st.caption("⚠️ 這筆沒有對應的雲端列號，只改了畫面。")
+                            st.rerun()
+                        try:
+                            _ws = get_or_create_ws(doc, "回覆紀錄")
+                            if str(_ws.cell(it["row"], 2).value or "").strip() != old_acc:
+                                st.caption("⚠️ 雲端那一列對不上原帳號，這次只改畫面沒有寫回雲端。")
+                                st.rerun()
+                            _ws.update_cell(it["row"], 2, new_acc)
+                            # 👑 VIP 名單跟著搬：錯帳號 -1（歸零就刪列），正確帳號 +1（沒有就新增）
+                            try:
+                                _wv = get_or_create_ws(doc, "VIP名單")
+                                _vals = _wv.get_all_values()
+                                _today = datetime.now().strftime("%Y-%m-%d")
+                                _idx_old = next((r for r, v in enumerate(_vals[1:], start=2)
+                                                 if v and str(v[0]).strip() == old_acc), None)
+                                if _idx_old:
+                                    try:
+                                        _cnt = int(str(_vals[_idx_old - 1][3]).strip() or 1)
+                                    except Exception:
+                                        _cnt = 1
+                                    if _cnt <= 1:
+                                        _wv.delete_rows(_idx_old)
+                                        _vals = _wv.get_all_values()
+                                    else:
+                                        _wv.update_cell(_idx_old, 4, _cnt - 1)
+                                _idx_new = next((r for r, v in enumerate(_vals[1:], start=2)
+                                                 if v and str(v[0]).strip() == new_acc), None)
+                                if _idx_new:
+                                    try:
+                                        _cn = int(str(_vals[_idx_new - 1][3]).strip() or 0)
+                                    except Exception:
+                                        _cn = 0
+                                    _wv.update_cell(_idx_new, 3, _today)
+                                    _wv.update_cell(_idx_new, 4, _cn + 1)
+                                else:
+                                    _wv.append_row([new_acc, _today, _today, 1])
+                            except Exception as e:
+                                st.caption(f"⚠️ 回覆紀錄已更正，但 VIP 名單沒改到：{str(e)[:80]}")
+                            st.success(f"已把「{old_acc}」更正為「{new_acc}」，雲端同步完成 ✅")
+                        except Exception as e:
+                            st.caption(f"⚠️ 寫回雲端失敗（畫面已更新）：{e}")
+                        st.rerun()
+
                     with cards_container:
                         for _i, _it in enumerate(_bres):
                             with st.expander(f"✨ 客戶帳號：{_it['acc']}", expanded=True):
+                                # ✏️ AI 有時會把帳號看錯：這裡可以當場改，按下去就同步雲端
+                                _ac1, _ac2 = st.columns([2, 1], vertical_alignment="bottom")
+                                _ac1.markdown('<span class="keep-row" style="display:none"></span>',
+                                              unsafe_allow_html=True)
+                                _ac1.text_input("👤 客戶帳號（AI 認錯可直接改）", value=_it["acc"],
+                                                key=f"br_acc_{_i}")
+                                if _ac2.button("💾 更正帳號", key=f"br_accfix_{_i}",
+                                               use_container_width=True):
+                                    _batch_fix_account(_i)
                                 st.markdown(f"**📝 原始評價內容:** {_it['rev']}")
                                 st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
                                 st.code(_it["pub"], language="text")
@@ -1797,10 +2086,12 @@ if doc:
                                     _batch_rewrite(_i, "priv", 5)
                         ai_render_cost(st.session_state.get("batch_model", GEMINI_DEFAULT))
                         if st.button("🧹 清掉這批結果", key="br_clear", use_container_width=True):
-                            for _k in [k for k in list(st.session_state.keys()) if str(k).startswith("br_ins_")]:
+                            for _k in [k for k in list(st.session_state.keys())
+                                       if str(k).startswith(("br_ins_", "br_acc_"))]:
                                 st.session_state.pop(_k, None)
                             st.session_state.pop("batch_results", None)
                             st.session_state.pop("batch_msg", None)
+                            batch_job_store()["job"] = None   # 連背景任務紀錄一起清掉
                             st.rerun()
 
         with tab2:
@@ -2394,9 +2685,11 @@ if doc:
                         # 🔑 回覆框用「代次 nonce」當 key：AI 改寫後換一把 key 重建，內容才換得掉。
                         #    （元件建立後不能再改它的 session_state，所以不能直接寫回同一把 key。）
                         _ern = int(st.session_state.get(f"qa_e_rnonce_{_rw}", 0))
-                        ereply = st.text_area("建議回覆範本", height=300, key=f"qa_e_reply_{_rw}_{_ern}",
-                                              value=st.session_state.get(f"qa_e_rval_{_rw}",
-                                                                         r["建議回覆範本"]))
+                        # 📏 回覆框高度依內容自動加長：整段看得到才好編輯（不用一直捲）
+                        _rval = st.session_state.get(f"qa_e_rval_{_rw}", r["建議回覆範本"])
+                        ereply = st.text_area("建議回覆範本（回覆客戶的訊息）",
+                                              height=qa_reply_height(_rval),
+                                              key=f"qa_e_reply_{_rw}_{_ern}", value=_rval)
                         # ✍️ 想加強什麼 → AI 套進整則回覆
                         _eins = st.text_input("✍️ 想加強／調整什麼？（AI 會融進整則回覆）",
                                               key=f"qa_e_ins_{_rw}",
@@ -2472,11 +2765,17 @@ if doc:
                         # 👁️ 檢視模式：標題＋分類標籤＋可複製的完整範本
                         tag = f"`{r['分類']}`　" if (r["分類"] or "").strip() else ""
                         st.markdown(f"#### {tag}{r['問題標題'] or '（未命名問題）'}")
-                        if (r["客戶問題範例"] or "").strip():
-                            st.markdown(f"<div style='color:#798571; margin-bottom:6px;'>💬 "
-                                        f"{r['客戶問題範例']}</div>", unsafe_allow_html=True)
-                        if (r["建議回覆範本"] or "").strip():
-                            st.code(r["建議回覆範本"], language="text")
+                        # 📂 內容改成「下拉展開才看」：清單保持清爽，要用哪一則再點開複製
+                        _preview = " ".join(str(r["建議回覆範本"] or "").split())[:36]
+                        with st.expander(f"👀 展開看完整內容／複製　{('｜' + _preview + '…') if _preview else ''}",
+                                         expanded=False):
+                            if (r["客戶問題範例"] or "").strip():
+                                st.markdown(f"<div style='color:#798571; margin-bottom:6px;'>💬 "
+                                            f"{r['客戶問題範例']}</div>", unsafe_allow_html=True)
+                            if (r["建議回覆範本"] or "").strip():
+                                st.code(r["建議回覆範本"], language="text")
+                            else:
+                                st.caption("這筆還沒有建議回覆範本。")
                         _c1, _c2, _c3 = st.columns([2, 1, 1])
                         _meta = " · ".join([x for x in [(r["關鍵字"] or "").strip(),
                                                         (r["更新時間"] or "").strip()] if x])
@@ -2524,7 +2823,9 @@ if doc:
                                               type=["png", "jpg", "jpeg"], key="qa_new_img")
                 # 回覆框同樣走 rval＋nonce，AI 生成／改寫後才換得掉內容
                 _nrn = int(st.session_state.get("qa_new_rnonce", 0))
-                _new_reply = st.text_area("建議回覆範本（可直接編輯）", height=300,
+                _new_reply = st.text_area("建議回覆範本（回覆客戶的訊息，可直接編輯）",
+                                          height=qa_reply_height(
+                                              st.session_state.get("qa_new_rval", "")),
                                           key=f"qa_new_reply_{_nrn}",
                                           value=st.session_state.get("qa_new_rval", ""),
                                           placeholder="可手動輸入，或用下面的 AI 生成後再微調")
@@ -2768,8 +3069,12 @@ if doc:
                 # 埋入隱形錨點：讓 CSS 在手機上把左右兩欄改成上下單欄
                 st.markdown('<span class="coupon-grid-anchor" style="display:none;"></span>', unsafe_allow_html=True)
 
-                # ✨ 標題＋上移／下移／刪除：同一排（標題在左，三顆方塊鍵靠右）
-                c_title, c_up, c_down, c_del = st.columns(4)
+                # 🔒 保護鎖：鎖住的版位刪不掉（避免誤按 ✕ 把常用的那張券刪掉）
+                _lock_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'couponlock_{slot_id}'), None)
+                _locked = bool(_lock_row and str(_lock_row[1]).strip() == "1")
+
+                # ✨ 標題＋上移／下移／刪除／保護鎖：同一排（標題在左，四顆方塊鍵靠右）
+                c_title, c_up, c_down, c_del, c_lock = st.columns(5)
                 with c_title:
                     # 埋入隱形錨點供 CSS 辨識（第一欄彈性、後三欄固定 40px 方塊鍵）
                     st.markdown('<span class="inline-row-btn" style="display:none;"></span>', unsafe_allow_html=True)
@@ -2785,7 +3090,8 @@ if doc:
                         trigger_order_save(sheet_url, st.session_state.active_slots)
                         st.rerun()
                 with c_del:
-                    if st.button("✕", key=f"del_btn_{slot_id}"):
+                    if st.button("✕", key=f"del_btn_{slot_id}", disabled=_locked,
+                                 help="刪掉這個版位（鎖住時按不動）"):
                         rows_to_del = [i + 1 for i, r in enumerate(cfg_data) if r and r[0] == f"coupon_{slot_id}"]
                         if rows_to_del:
                             with st.spinner("刪除中..."):
@@ -2794,6 +3100,13 @@ if doc:
                                 st.session_state.refresh_cfg = True
                         st.session_state.active_slots.remove(slot_id)
                         trigger_order_save(sheet_url, st.session_state.active_slots)
+                        st.rerun()
+                with c_lock:
+                    if st.button("🔒" if _locked else "🔓", key=f"lock_btn_{slot_id}",
+                                 help=("已上鎖：這個版位刪不掉。按一下解鎖。" if _locked
+                                       else "按一下上鎖：鎖住後就不會被誤刪。")):
+                        _save_kv(ws_cfg, f"couponlock_{slot_id}", "" if _locked else "1")
+                        st.session_state.refresh_cfg = True
                         st.rerun()
 
                 # 🧼 關鍵修正：分開「乾淨底圖」與「成品圖」，壓字一律壓在乾淨底圖上，不會疊字。
@@ -2847,6 +3160,41 @@ if doc:
                                        file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png",
                                        key=f"dl_btn_{slot_id}", use_container_width=True)
                     st.caption("💡 手機直接長按上面那張圖 → 存到相簿（原畫質）")
+
+                    # 📅 快速換日期：打上日期，就用「上次記住的位置／大小／顏色」壓在乾淨底圖上直接出券。
+                    #    刻意「不寫回雲端」→ 雲端那張永遠是空白底圖，不會被上個月的日期蓋掉，隨時可再換。
+                    _sv_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None)
+                    _sv = _parse_coupset(_sv_row)
+                    with st.expander("📅 快速換日期（打上日期直接出券）", expanded=bool(_sv)):
+                        if clean_row is None:
+                            st.caption("⚠️ 這個版位還沒存過『乾淨底圖』，壓出來可能會疊到舊的字。"
+                                       "建議重新上傳一次沒有字的底圖並按「✅ 直接儲存原圖（不加字）」。")
+                        if not _sv:
+                            st.caption("還沒記住日期要壓在哪裡。先用下面「✏️ 想加日期/文字」喬好位置、按「✅ 確認儲存」一次，"
+                                       "之後每次就能在這裡直接換日期。")
+                        _qd = st.text_input("日期", value="", key=f"qd_{slot_id}",
+                                            placeholder=f"例如 {default_coupon_txt}",
+                                            help="打完馬上出券（用上次記住的位置、大小、顏色）。雲端底圖不會被改動。")
+                        if (_qd or "").strip() and _sv:
+                            _qimg, _, _ = _stamp_coupon(
+                                base_img, _qd.strip(), _sv.get("color", "#FFFFFF"),
+                                int(_sv.get("size", 50)),
+                                int(_sv.get("x", base_img.width // 2)),
+                                int(_sv.get("y", int(base_img.height * 0.7))),
+                                int(_sv.get("rot", 0)))
+                            _qbuf = BytesIO()
+                            _qimg.save(_qbuf, format="PNG")
+                            st.markdown(
+                                f'<img src="data:image/png;base64,'
+                                f'{base64.b64encode(_qbuf.getvalue()).decode()}" '
+                                f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
+                                f'alt="折價券{display_num}">', unsafe_allow_html=True)
+                            st.download_button("💻 下載這張（含日期）", data=_qbuf.getvalue(),
+                                               file_name=f"BearJoy_Coupon_{display_num}_"
+                                                         f"{_safe_filename(_qd.strip())}.png",
+                                               mime="image/png", key=f"qdl_{slot_id}",
+                                               use_container_width=True)
+                            st.caption("💡 手機長按上圖 → 存到相簿。雲端那張仍是空白底圖，下次可以再換別的日期。")
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 

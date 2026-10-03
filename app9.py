@@ -355,7 +355,8 @@ st.markdown("""
     }
     /* 壓印文字框（單行）高度 42px */
     div[data-testid="stTextInput"] input { height: 42px !important; padding: 6px 10px !important; }
-    div[data-testid="stTextArea"] textarea { min-height: 42px !important; height: 42px !important; padding: 6px 10px !important; }
+    /* 多行框（問題分類庫的範例／回覆範本）不可壓成 42px，否則手機上只剩一行看不到內容 → 高度交給各框自己的 height 設定 */
+    div[data-testid="stTextArea"] textarea { padding: 6px 10px !important; }
     /* 顏色色塊＝正方形，高度與左邊壓印文字框一致(42px)、底部對齊同一排 */
     div[data-testid="stColorPicker"] { margin-top: 0px !important; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start;}
     div[data-testid="stColorPicker"] div[role="button"] { width: 42px !important; height: 42px !important; min-width: 42px !important; padding: 0 !important; border-radius: 6px !important; }
@@ -1530,6 +1531,38 @@ def _same_review(a_rev, a_rt, b_rev, b_rt, thr=0.8):
     return difflib.SequenceMatcher(None, a_rev, b_rev).ratio() >= thr
 
 
+# AI 讀不到帳號時常回「無」「匿名」「None」或一串星號 → 一律當「未知」，不可當成真帳號寫進 VIP 名單
+_NO_ACC = {"", "無", "none", "null", "未知", "匿名", "-", "n/a", "na", "無帳號", "看不到", "不明", "（無）", "(無)"}
+
+
+def _acc_clean(a):
+    s = str(a or "").strip()
+    if s.lower() in _NO_ACC or not re.sub(r"[\*＊\s()（）]", "", s):
+        return "未知"
+    return s
+
+
+def _img_fp(img):
+    """截圖指紋：縮成 32×32 灰階、16 階，加上長寬比。
+    同一張截圖就算被壓縮、縮放過也幾乎一樣 → 在叫 AI 之前就能擋掉重複，不花 AI 費用。"""
+    w, h = img.size
+    g = img.convert("L").resize((32, 32))
+    return f"{round(w / max(h, 1), 3)}:" + "".join("%x" % (p >> 4) for p in g.getdata())
+
+
+def _fp_same(a, b):
+    """兩個指紋是不是同一張圖：長寬比差 2% 內，且 1024 格中差超過 2 階的格子不到 2%。"""
+    try:
+        ra, pa = a.split(":", 1)
+        rb, pb = b.split(":", 1)
+        if abs(float(ra) - float(rb)) > 0.02 * max(float(ra), 0.01) or len(pa) != len(pb):
+            return False
+        diff = sum(1 for x, y in zip(pa, pb) if abs(int(x, 16) - int(y, 16)) > 2)
+        return diff <= len(pa) * 0.02
+    except Exception:
+        return False
+
+
 @st.cache_resource(show_spinner=False)
 def batch_job_store():
     """跨工作階段共用的批次任務儲存區：程式沒關就在，手機切走再回來也讀得到同一份進度。"""
@@ -1575,7 +1608,7 @@ def _batch_sync_cloud(job, doc_bg, results):
             if len(_rv) > 2:
                 _idx.setdefault(str(_rv[1]).strip().lower(), []).append(
                     (_r0, _rev_norm(_rv[2]), (_rv[5] if len(_rv) > 5 else "")))
-        new_rows, dup_count, upd_count, row_map = [], 0, 0, {}
+        new_rows, dup_count, upd_count, row_map, vip_add = [], 0, 0, {}, []
         for row in results:
             _acc_k = str(row[1]).strip().lower()
             _nv, _nt = _rev_norm(row[2]), (row[5] if len(row) > 5 else "")
@@ -1587,6 +1620,26 @@ def _batch_sync_cloud(job, doc_bg, results):
                     else:
                         _hit = _rn
                     break
+            # 🛡️ 跨帳號比內容：帳號讀不到（未知）或讀錯時，上面「同帳號」比不到 →
+            #    跟所有帳號比內容，相似度 ≥0.9 就當同一則（內容太短的不比，避免「很好用」這類誤判）。
+            if not _hit and not _self_dup and len(_nv) >= 20:
+                for _k, _lst in _idx.items():
+                    if _k == _acc_k:
+                        continue
+                    for _rn, _ov, _ot in _lst:
+                        if _ov and difflib.SequenceMatcher(None, _ov, _nv).ratio() >= 0.9:
+                            if _k == "未知" and _acc_k != "未知" and _rn:
+                                _hit = _rn          # 舊的那筆沒帳號、這次讀到了 → 覆蓋補上帳號
+                                vip_add.append(row)
+                            else:
+                                _self_dup = True
+                                if _rn:
+                                    row_map[(str(row[1]).strip(), str(row[2]).strip())] = _rn
+                                job["notes"].append(
+                                    f"⏭️ 「{row[1]}」這則評價跟已存在的「{_k}」內容相同，判定重複，沒有寫入雲端。")
+                            break
+                    if _hit or _self_dup:
+                        break
             if _self_dup:
                 dup_count += 1
                 continue
@@ -1617,17 +1670,21 @@ def _batch_sync_cloud(job, doc_bg, results):
         v_header = vip_vals[0]
         vip_records = [dict(zip(v_header, r)) for r in vip_vals[1:]]
         date_str = datetime.now().strftime("%Y-%m-%d")
-        for row in new_rows:
-            account = row[1]
+        for row in new_rows + vip_add:
+            account = _acc_clean(row[1])
             if account == "未知":
                 continue
             fi = next((i for i, r in enumerate(vip_records)
                        if str(r.get('客戶帳號', '')) == account), -1)
             if fi != -1:
+                _cnt = int(vip_records[fi].get('互動次數', 0) or 0) + 1
                 ws_vip.update_cell(fi + 2, 3, date_str)
-                ws_vip.update_cell(fi + 2, 4, int(vip_records[fi].get('互動次數', 0)) + 1)
+                ws_vip.update_cell(fi + 2, 4, _cnt)
+                vip_records[fi]['互動次數'] = _cnt
             else:
                 ws_vip.append_row([account, date_str, date_str, 1])
+                # 同一批出現兩次的新帳號：要記進清單，否則第二次又會新增一列
+                vip_records.append({'客戶帳號': account, '互動次數': 1})
         try:
             ws_vip.format("A:A", {"horizontalAlignment": "LEFT", "verticalAlignment": "TOP"})
             ws_vip.format("B:D", {"horizontalAlignment": "RIGHT", "verticalAlignment": "TOP"})
@@ -1659,12 +1716,35 @@ def _batch_worker(job, imgs, opts):
         except Exception as e:
             job["notes"].append(f"⚠️ 雲端連線失敗，這批只會顯示在畫面、不寫回雲端：{str(e)[:90]}")
 
+        # 🛡️ 截圖指紋：跑過的截圖都記在雲端「截圖指紋」分頁；同一張再上傳 → 叫 AI 之前就跳過，不花錢
+        fp_known, new_fps, ws_fp = [], [], None
+        if doc_bg is not None:
+            try:
+                ws_fp = get_or_create_ws(doc_bg, "截圖指紋")
+                fp_known = [((r + ["", "", ""])[:3]) for r in ws_fp.get_all_values()[1:] if r and r[0]]
+            except Exception as e:
+                job["notes"].append(f"⚠️ 讀不到截圖指紋，這批無法事先擋重複（仍會在寫入前比內容）：{str(e)[:80]}")
+
         results = []
+        _called = 0
         for i, (fname, img) in enumerate(imgs):
             job["current_name"] = fname
+            fp = ""
+            try:
+                fp = _img_fp(img)
+            except Exception:
+                pass
+            _old = next((k for k in fp_known if fp and _fp_same(k[0], fp)), None)
+            if _old:
+                job["skipped"] = job.get("skipped", 0) + 1
+                job["notes"].append(f"⏭️ {fname} 是已經跑過的截圖（{_old[1] or '未知'}，{_old[2]}），"
+                                    f"已略過，沒有呼叫 AI、沒有花費。")
+                job["done"] = i + 1
+                continue
             # ✨ 第一張立即處理，之後每張間隔 4 秒，避免免費版流量限制
-            if i > 0:
+            if _called > 0:
                 time.sleep(4)
+            _called += 1
             res_text, usage = gemini_call_costed(opts["api_key"], [prompt_base, img], opts["model"])
             if usage:
                 job["cost"] = job.get("cost", 0.0) + usage.get("cost", 0.0)
@@ -1674,7 +1754,14 @@ def _batch_worker(job, imgs, opts):
                 job["done"] = i + 1
                 continue
 
-            acc = _extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]) or "未知"
+            acc = _acc_clean(_extract_section(res_text, "[ACCOUNT]", ["[REVIEW]"]))
+            if acc == "未知":
+                job["notes"].append(f"👤 {fname} 讀不到客戶帳號，已記為「未知」（不進 VIP 名單），"
+                                    f"請在結果卡片用「👤 帳號可改」補上。")
+            if fp:
+                _fp_row = [fp, acc, datetime.now().strftime("%Y-%m-%d %H:%M")]
+                fp_known.append(_fp_row)     # 同一批後面再出現同一張也會被擋
+                new_fps.append(_fp_row)
             rev = _extract_section(res_text, "[REVIEW]", ["[SPEC]", "[PUBLIC]"]) or "解析失敗"
             spec = (_extract_section(res_text, "[SPEC]", ["[RTIME]", "[PUBLIC]"]) or "").strip()
             # 🕒 評價本身的日期時間：拿它當「這則評價的身分證」來去重，比比對文字準
@@ -1723,6 +1810,13 @@ def _batch_worker(job, imgs, opts):
 
         if doc_bg is not None and results:
             _batch_sync_cloud(job, doc_bg, results)
+        if ws_fp is not None and new_fps:
+            try:
+                if not ws_fp.get_all_values():
+                    ws_fp.append_row(["截圖指紋", "客戶帳號", "紀錄時間"])
+                ws_fp.append_rows(new_fps)
+            except Exception as e:
+                job["notes"].append(f"⚠️ 截圖指紋沒存到雲端（下次同一張圖擋不到）：{str(e)[:80]}")
         job["finished"] = datetime.now().strftime("%H:%M:%S")
         job["status"] = "done"
     except Exception as e:
@@ -2677,8 +2771,10 @@ if doc:
             elif not shown:
                 st.info("找不到符合的範本，換個關鍵字或把分類切回「全部」。")
 
+            # 📜 清單放進固定高度的捲動框：超過 3 筆就在框內滑，不必把整頁滑到很下面才看到下方功能
+            _qa_box = st.container(height=560) if len(shown) > 3 else st.container()
             for r in shown:
-                with st.container(border=True):
+                with _qa_box, st.container(border=True):
                     if st.session_state.get("qa_edit") == r["_row"]:
                         # ✏️ 編輯模式
                         _rw = r["_row"]

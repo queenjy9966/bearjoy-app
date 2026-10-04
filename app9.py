@@ -3294,6 +3294,34 @@ if doc:
                                                mime="image/png", key=f"qdl_{slot_id}",
                                                use_container_width=True)
                             st.caption("💡 手機長按上圖 → 存到相簿。雲端那張仍是空白底圖，下次可以再換別的日期。")
+                            # ➕ 換好日期的這張直接存成「新版位」（插在這格正下方），舊版位原封不動；
+                            #    一併複製乾淨底圖＋壓印位置，新版位之後也能再快速換日期。
+                            if st.button("➕ 存成新版位（舊的保留）", use_container_width=True,
+                                         key=f"qnew_{slot_id}"):
+                                with st.spinner("建立新版位中..."):
+                                    new_id = 1
+                                    while new_id in st.session_state.active_slots:
+                                        new_id += 1
+                                    # 先清掉同編號以前刪除時殘留的底圖／位置記憶，避免混到舊資料
+                                    _nkeys = (f"coupon_{new_id}", f"couponbase_{new_id}",
+                                              f"coupset_{new_id}", f"couponlock_{new_id}")
+                                    for ri in sorted([i + 1 for i, r in enumerate(cfg_data)
+                                                      if r and r[0] in _nkeys], reverse=True):
+                                        ws_cfg.delete_rows(ri)
+                                    ws_cfg.append_row([f"coupon_{new_id}"] + img_to_base64_chunks(_qimg.convert("RGB")))
+                                    ws_cfg.append_row([f"couponbase_{new_id}"] + img_to_base64_chunks(base_img.convert("RGB")))
+                                    _qtxt = _qd.strip().replace("|", "｜")
+                                    ws_cfg.append_row([f"coupset_{new_id}",
+                                                       f"{_sv.get('x', base_img.width // 2)}|"
+                                                       f"{_sv.get('y', int(base_img.height * 0.7))}|"
+                                                       f"{_sv.get('size', 50)}|{_sv.get('rot', 0)}|"
+                                                       f"{_sv.get('color', '#FFFFFF')}|{_qtxt}"])
+                                    st.session_state.active_slots.insert(idx + 1, new_id)
+                                    trigger_order_save(sheet_url, st.session_state.active_slots)
+                                    st.session_state.pop("_decoded_imgs", None)
+                                    st.session_state.refresh_cfg = True
+                                st.toast(f"已新增版位 {display_num + 1}（{_qd.strip()}），舊的版位 {display_num} 沒有動。")
+                                st.rerun()
 
                 new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
                 

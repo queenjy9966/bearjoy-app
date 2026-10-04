@@ -520,6 +520,19 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) .stDownloadButton > button {
         max-width: none !important;
     }
+    /* ✨ 折價券圖下方「兩排兩鍵」：電腦、手機都鎖死一排兩顆、等寬，不會被擠成一顆一排 */
+    div[data-testid="stHorizontalBlock"]:has(.coupon-act-row):not(:has(.coupon-grid-anchor)) {
+        display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
+        gap: 8px !important; margin-bottom: -6px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.coupon-act-row):not(:has(.coupon-grid-anchor)) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 0 !important; width: auto !important; min-width: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.coupon-act-row):not(:has(.coupon-grid-anchor)) button {
+        padding: 0 6px !important; white-space: nowrap !important;
+    }
+    /* 隱形錨點本身不佔高度，左右兩顆才會對齊 */
+    div[data-testid="stElementContainer"]:has(.coupon-act-row) { display: none !important; }
     /* ✨ 折價券：每個版位包成米色卡片，清楚分辨哪些按鈕屬於哪個版位 */
     div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) {
         background: #F5F3EC !important;
@@ -3250,26 +3263,51 @@ if doc:
                 except Exception:
                     st.warning("圖片載入異常，請重新上傳")
 
-                # ✨ 下載鈕＋提示改成上下兩行：並排在手機上會擠到重疊、右邊字還會被切掉
+                # ✨ 圖下方固定「兩排、每排兩鍵」：下載／換日期／加字調位置／換底圖。
+                #    按哪顆才展開那一區（再按一次收起），版面不再一長串。
+                _cmode = None
                 if base_img:
+                    _sv_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None)
+                    _sv = _parse_coupset(_sv_row)
+                    _mkey = f"cmode_{slot_id}"
+                    if _mkey not in st.session_state:
+                        st.session_state[_mkey] = "date" if _sv else None   # 記過日期位置 → 預設打開換日期
+                    _cmode = st.session_state[_mkey]
+
+                    def _mode_btn(label, mode):
+                        _on = (_cmode == mode)
+                        if st.button(("▾ " if _on else "") + label, key=f"cm_{mode}_{slot_id}",
+                                     use_container_width=True):
+                            st.session_state[_mkey] = None if _on else mode
+                            st.rerun()
+
                     buf = BytesIO()
                     # ✨ 畫質升級：無損 PNG 下載（下載已存成品＝含字那張）
                     (display_img or base_img).save(buf, format="PNG")
-                    st.download_button(label="💻 下載到電腦", data=buf.getvalue(),
-                                       file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png",
-                                       key=f"dl_btn_{slot_id}", use_container_width=True)
-                    st.caption("💡 手機直接長按上面那張圖 → 存到相簿（原畫質）")
+                    _r1a, _r1b = st.columns(2)
+                    with _r1a:
+                        st.markdown('<span class="coupon-act-row" style="display:none;"></span>', unsafe_allow_html=True)
+                        st.download_button(label="💻 下載到電腦", data=buf.getvalue(),
+                                           file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png",
+                                           key=f"dl_btn_{slot_id}", use_container_width=True,
+                                           help="手機可直接長按上面那張圖 → 存到相簿（原畫質）")
+                    with _r1b:
+                        _mode_btn("📅 換日期", "date")
+                    _r2a, _r2b = st.columns(2)
+                    with _r2a:
+                        st.markdown('<span class="coupon-act-row" style="display:none;"></span>', unsafe_allow_html=True)
+                        _mode_btn("✏️ 加字/調位置", "edit")
+                    with _r2b:
+                        _mode_btn("🖼️ 換底圖", "upload")
 
                     # 📅 快速換日期：打上日期，就用「上次記住的位置／大小／顏色」壓在乾淨底圖上直接出券。
                     #    刻意「不寫回雲端」→ 雲端那張永遠是空白底圖，不會被上個月的日期蓋掉，隨時可再換。
-                    _sv_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None)
-                    _sv = _parse_coupset(_sv_row)
-                    with st.expander("📅 快速換日期（打上日期直接出券）", expanded=bool(_sv)):
+                    if _cmode == "date":
                         if clean_row is None:
                             st.caption("⚠️ 這個版位還沒存過『乾淨底圖』，壓出來可能會疊到舊的字。"
                                        "建議重新上傳一次沒有字的底圖並按「✅ 直接儲存原圖（不加字）」。")
                         if not _sv:
-                            st.caption("還沒記住日期要壓在哪裡。先用下面「✏️ 想加日期/文字」喬好位置、按「✅ 確認儲存」一次，"
+                            st.caption("還沒記住日期要壓在哪裡。先按上面「✏️ 加字/調位置」喬好位置、按「✅ 確認儲存」一次，"
                                        "之後每次就能在這裡直接換日期。")
                         _qd = st.text_input("日期", value="", key=f"qd_{slot_id}",
                                             placeholder=f"例如 {default_coupon_txt}",
@@ -3323,8 +3361,11 @@ if doc:
                                 st.toast(f"已新增版位 {display_num + 1}（{_qd.strip()}），舊的版位 {display_num} 沒有動。")
                                 st.rerun()
 
-                new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
-                
+                # 🖼️ 上傳框只在「換底圖」或空版位時出現
+                new_file = None
+                if base_img is None or _cmode == "upload":
+                    new_file = st.file_uploader(f"更換版位 {display_num} 圖片", type=["png", "jpg", "jpeg"], key=f"up_file_{slot_id}", label_visibility="collapsed")
+
                 if new_file:
                     base_img = Image.open(new_file)
                     # 直接上傳、不需編輯：一鍵存原圖
@@ -3338,12 +3379,15 @@ if doc:
                             ws_cfg.append_row([f"coupon_{slot_id}"] + chunks)
                             ws_cfg.append_row([f"couponbase_{slot_id}"] + chunks)
                             st.session_state.pop("_decoded_imgs", None)
+                            st.session_state.pop(f"cmode_{slot_id}", None)   # 存好新底圖 → 收起換底圖區
                             st.session_state.refresh_cfg = True
                             st.success("已儲存！")
                             st.rerun()
 
-                if base_img:
-                    with st.expander("✏️ 想加日期/文字再點開（不需要可略過）", expanded=False):
+                # ✏️ 加字/調位置：按了才直接展開；剛上傳新底圖時則收成折疊區，要加字再點開
+                if base_img and (_cmode == "edit" or new_file is not None):
+                    with (st.container() if _cmode == "edit" else
+                          st.expander("✏️ 要加日期/文字再點開（不需要可略過）", expanded=False)):
                         enable_text = st.checkbox("✒️ 啟動文字壓印", value=True, key=f"en_txt_{slot_id}")
                         final_img_to_save = base_img 
                         
@@ -3682,6 +3726,7 @@ if doc:
                                              f"{x_pos}|{y_pos}|{font_size}|{rotation_angle}|{text_color}|{_txt_mem}")
 
                                 st.session_state.pop("_decoded_imgs", None)
+                                st.session_state.pop(f"cmode_{slot_id}", None)   # 存好 → 收起編輯區，回到換日期
                                 st.session_state.refresh_cfg = True
                                 st.success("更新成功！")
                                 st.rerun()

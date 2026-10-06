@@ -1,0 +1,3 @@
+# MagisJo 品牌主色（綠 #5b7c65）：勾選框、單選鈕、拉桿、焦點框都用公司綠，不用 Streamlit 預設紅
+[theme]
+primaryColor = "#5b7c65"

@@ -541,6 +541,98 @@ st.markdown("""
         padding: 14px !important;
         overflow: visible !important;
     }
+    /* ========================================================= */
+    /* 🎨 折價券版位卡片：MagisJo 品牌（米白 #f0ece2／綠 #5b7c65／棕 #a9835e／正黑體）     */
+    /*    小按鍵 34px、同排等寬對齊、手機也不疊成一長串；只用底色區分「目前打開的」        */
+    /* ========================================================= */
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) {
+        background: #fbf9f5 !important; border: 1px solid #e2d9c9 !important;
+        border-radius: 14px !important; padding: 12px 12px 8px !important;
+        font-family: "Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stVerticalBlock"] { gap: 8px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button, body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button {
+        height: 34px !important; min-height: 34px !important; padding: 0 6px !important;
+        border-radius: 8px !important; border: 1px solid #e2d9c9 !important;
+        background: #ffffff !important; color: #3f392f !important;
+        font-size: 13px !important; font-weight: 600 !important; white-space: nowrap !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button *, body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button * {
+        color: #3f392f !important; font-size: 13px !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button:hover, body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button:hover {
+        background: #f0ece2 !important; border-color: #a9835e !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button[data-testid="stBaseButton-primary"] {
+        background: #5b7c65 !important; border-color: #5b7c65 !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button[data-testid="stBaseButton-primary"] * { color: #ffffff !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button[data-testid="stBaseButton-primary"]:hover { background: #4a6854 !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button:disabled { opacity: .45 !important; background: #ffffff !important; }
+    /* 每一排（cpn-row）：電腦、手機都維持同一排、等寬、底部對齊 */
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.cpn-row) {
+        display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
+        gap: 6px !important; align-items: flex-end !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.cpn-row) > div:is([data-testid="column"],[data-testid="stColumn"]) {
+        flex: 1 1 0 !important; width: auto !important; min-width: 0 !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stElementContainer"]:has(.cpn-row) { display: none !important; }
+    /* 「每月換字母」勾選框跟旁邊輸入框底部對齊 */
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.cpn-row) .stCheckbox { padding-bottom: 7px !important; }
+    /* 標題列：版位名稱＋四顆 32px 外框小鍵（↑ ↓ ✕ 鎖） */
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) { align-items: center !important; gap: 6px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]) { margin: 0 !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stElementContainer"]:has(.inline-row-btn) { display: none !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:nth-child(1) :is([data-testid="stElementContainer"],[data-testid="stMarkdown"],[data-testid="stMarkdownContainer"]) {
+        height: auto !important; min-height: 0 !important; margin: 0 !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) div.stButton button [data-testid="stIconMaterial"] { margin: 0 !important; font-size: 17px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:nth-child(4) div.stButton button [data-testid="stIconMaterial"] { color: #b5674a !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) div.stButton button[data-testid="stBaseButton-primary"] { background: #5b7c65 !important; border-color: #5b7c65 !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) div.stButton button[data-testid="stBaseButton-primary"] [data-testid="stIconMaterial"] { color: #ffffff !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) {
+        flex: 0 0 32px !important; width: 32px !important; min-width: 32px !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button {
+        width: 32px !important; min-width: 32px !important; max-width: 32px !important; height: 32px !important; min-height: 32px !important; padding: 0 !important;
+        background: #ffffff !important; border: 1px solid #e2d9c9 !important; border-radius: 8px !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(n+2) div.stButton > button * {
+        color: #8a6440 !important; font-size: 14px !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) > div:is([data-testid="column"],[data-testid="stColumn"]):nth-child(4) div.stButton > button * { color: #b5674a !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div[data-testid="stHorizontalBlock"]:has(.inline-row-btn) .sub-title-text {
+        font-size: 15px !important; color: #3f392f !important; border-left: 3px solid #5b7c65 !important; padding-left: 8px !important; margin: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; line-height: 22px !important;
+    }
+    /* 欄位標籤小一點、輸入框 34px */
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stWidgetLabel"] { min-height: 0 !important; margin-bottom: 2px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stWidgetLabel"] p { font-size: 12px !important; color: #8d8371 !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stTextInput input { height: 34px !important; min-height: 34px !important; font-size: 13px !important; padding: 0 10px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stTextInput [data-baseweb="input"], body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stSelectbox [data-baseweb="select"] > div {
+        min-height: 34px !important; border-radius: 8px !important; background: #ffffff !important; border-color: #e2d9c9 !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stSelectbox [data-baseweb="select"] > div { height: 34px !important; font-size: 13px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .cpn-img { display: block; width: 100%; max-width: 340px; height: auto; border-radius: 10px; margin: 0 auto; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) :is([data-testid="stElementContainer"],[data-testid="stMarkdown"],[data-testid="stMarkdownContainer"]):has(.cpn-img) {
+        height: auto !important; margin: 0 !important; overflow: visible !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .cpn-sum { font-size: 12.5px; color: #8d8371; margin: 0; padding-bottom: 6px; line-height: 1.4; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stRadio label p { font-size: 13px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stRadio [role="radiogroup"] { gap: 14px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stColorPickerBlock"] { width: 34px !important; height: 34px !important; border: 1px solid #a9835e !important; border-radius: 8px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stElementContainer"]:has(.cpn-sum) { margin: 0 0 4px !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button p, body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button p { margin: 0 !important; line-height: 1 !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] { width: 100% !important; margin: 0 !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button { width: 100% !important; max-width: none !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button [data-testid="stIconMaterial"], body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button [data-testid="stIconMaterial"] {
+        font-size: 17px !important; color: inherit !important; margin-right: 2px !important;
+    }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) div.stButton button[data-testid="stBaseButton-secondary"] [data-testid="stIconMaterial"],
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stDownloadButton"] button [data-testid="stIconMaterial"] { color: #a9835e !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stTextInput [data-baseweb="base-input"], body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .stTextInput input { background: #ffffff !important; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) .cpn-sum b { color: #5b7c65; letter-spacing: .3px; }
+    body div:is([data-testid="column"],[data-testid="stColumn"]):has(.coupon-grid-anchor) [data-testid="stColorPicker"] > div { min-height: 34px !important; }
     /* ✨ 折疊區（expander）：邊框完整呈現、不被卡片邊緣截掉（含「✏️ 想加日期/文字」） */
     div[data-testid="stExpander"] { overflow: visible !important; margin-top: 8px !important; }
     div[data-testid="stExpander"] > details {
@@ -1454,7 +1546,7 @@ _CODE_DEFAULT = {"x": 0.593, "y": 0.599, "size": 0.0333, "rot": -3}
 _DATE_DEFAULT = {"x": 0.648, "y": 0.641, "size": 0.0333, "rot": -3}
 
 def _parse_codeset(row):
-    """解析代碼壓印記憶 x|y|size|rot|color|基本碼|每月換字母(1/0)。"""
+    """解析代碼壓印記憶 x|y|size|rot|color|基本碼|每月換字母(1/0)|換字母起始年月(YYYYMM)。"""
     if not (row and len(row) > 1):
         return {}
     p = str(row[1]).split("|")
@@ -1463,7 +1555,8 @@ def _parse_codeset(row):
                 "size": int(float(p[2])), "rot": int(float(p[3])),
                 "color": p[4] if len(p) > 4 else "#FFFFFF",
                 "base": p[5] if len(p) > 5 else "",
-                "rotate": (p[6] != "0") if len(p) > 6 else True}
+                "rotate": (p[6] != "0") if len(p) > 6 else True,
+                "start": p[7] if len(p) > 7 and p[7].isdigit() else ""}
     except Exception:
         return {}
 
@@ -3238,20 +3331,20 @@ if doc:
                 with c_title:
                     # 埋入隱形錨點供 CSS 辨識（第一欄彈性、後三欄固定 40px 方塊鍵）
                     st.markdown('<span class="inline-row-btn" style="display:none;"></span>', unsafe_allow_html=True)
-                    st.markdown(f"<p class='sub-title-text' style='margin:0; line-height:40px;'>折價券版位 {display_num}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p class='sub-title-text' style='margin:0; line-height:32px;'>版位 {display_num}</p>", unsafe_allow_html=True)
                 with c_up:
-                    if st.button("↑", key=f"up_btn_{slot_id}", disabled=is_first):
+                    if st.button("", icon=":material/arrow_upward:", key=f"up_btn_{slot_id}", disabled=is_first):
                         st.session_state.active_slots[idx], st.session_state.active_slots[idx-1] = st.session_state.active_slots[idx-1], st.session_state.active_slots[idx]
                         trigger_order_save(sheet_url, st.session_state.active_slots)
                         st.rerun()
                 with c_down:
-                    if st.button("↓", key=f"dn_btn_{slot_id}", disabled=is_last):
+                    if st.button("", icon=":material/arrow_downward:", key=f"dn_btn_{slot_id}", disabled=is_last):
                         st.session_state.active_slots[idx], st.session_state.active_slots[idx+1] = st.session_state.active_slots[idx+1], st.session_state.active_slots[idx]
                         trigger_order_save(sheet_url, st.session_state.active_slots)
                         st.rerun()
                 with c_del:
-                    if st.button("✕", key=f"del_btn_{slot_id}", disabled=_locked,
-                                 help="刪掉這個版位（鎖住時按不動）"):
+                    # 不加 help 提示：提示會多包一層，按鍵就跟旁邊對不齊
+                    if st.button("", icon=":material/close:", key=f"del_btn_{slot_id}", disabled=_locked):
                         rows_to_del = [i + 1 for i, r in enumerate(cfg_data) if r and r[0] == f"coupon_{slot_id}"]
                         if rows_to_del:
                             with st.spinner("刪除中..."):
@@ -3262,9 +3355,9 @@ if doc:
                         trigger_order_save(sheet_url, st.session_state.active_slots)
                         st.rerun()
                 with c_lock:
-                    if st.button("🔒" if _locked else "🔓", key=f"lock_btn_{slot_id}",
-                                 help=("已上鎖：這個版位刪不掉。按一下解鎖。" if _locked
-                                       else "按一下上鎖：鎖住後就不會被誤刪。")):
+                    # 上鎖＝綠底實心鎖（刪除鍵變淡按不動）；沒鎖＝外框開鎖
+                    if st.button("", icon=":material/lock:" if _locked else ":material/lock_open:",
+                                 key=f"lock_btn_{slot_id}", type="primary" if _locked else "secondary"):
                         _save_kv(ws_cfg, f"couponlock_{slot_id}", "" if _locked else "1")
                         st.session_state.refresh_cfg = True
                         st.rerun()
@@ -3295,24 +3388,13 @@ if doc:
                         base_img = display_img      # 舊資料沒有乾淨底圖 → 暫用成品(可能已含字)
                     if display_img is None:
                         display_img = base_img
-                    if display_img is not None:
-                        # 📱 預覽改用「完整原圖」當 src、只用 CSS 顯示縮小：
-                        #    這樣手機長按「加入照片」存進相簿的是完整畫質（1080），不再是 300px 糊圖
-                        _pv = BytesIO()
-                        display_img.save(_pv, format="PNG")
-                        _pv_b64 = base64.b64encode(_pv.getvalue()).decode()
-                        st.markdown(
-                            f'<img src="data:image/png;base64,{_pv_b64}" '
-                            f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
-                            f'alt="折價券{display_num}">',
-                            unsafe_allow_html=True)
-                    else:
-                        st.info("此版位目前為空，請先上傳底圖。")
                 except Exception:
                     st.warning("圖片載入異常，請重新上傳")
 
-                # ✨ 圖下方固定「兩排、每排兩鍵」：下載／換日期／加字調位置／換底圖。
-                #    按哪顆才展開那一區（再按一次收起），版面不再一長串。
+                # 🖼️ 圖只顯示一張：換月份時直接換成當月預覽（不再另外多一張）。先佔位置，算完再填進去。
+                _img_ph = st.empty()
+                _act_ph = st.empty()
+                _show_img, _dl_name = display_img, f"BearJoy_Coupon_{display_num}"
                 _cmode = None
                 if base_img:
                     _sv_row = next((r for r in cfg_data if len(r) > 1 and r[0] == f'coupset_{slot_id}'), None)
@@ -3322,38 +3404,11 @@ if doc:
                         st.session_state[_mkey] = "date" if _sv else None   # 記過日期位置 → 預設打開換月份
                     _cmode = st.session_state[_mkey]
 
-                    def _mode_btn(label, mode):
-                        _on = (_cmode == mode)
-                        if st.button(("▾ " if _on else "") + label, key=f"cm_{mode}_{slot_id}",
-                                     use_container_width=True):
-                            st.session_state[_mkey] = None if _on else mode
-                            st.rerun()
-
-                    buf = BytesIO()
-                    # ✨ 畫質升級：無損 PNG 下載（下載已存成品＝含字那張）
-                    (display_img or base_img).save(buf, format="PNG")
-                    _r1a, _r1b = st.columns(2)
-                    with _r1a:
-                        st.markdown('<span class="coupon-act-row" style="display:none;"></span>', unsafe_allow_html=True)
-                        st.download_button(label="💻 下載到電腦", data=buf.getvalue(),
-                                           file_name=f"BearJoy_Coupon_{display_num}.png", mime="image/png",
-                                           key=f"dl_btn_{slot_id}", use_container_width=True,
-                                           help="手機可直接長按上面那張圖 → 存到相簿（原畫質）")
-                    with _r1b:
-                        _mode_btn("📅 換月份", "date")
-                    _r2a, _r2b = st.columns(2)
-                    with _r2a:
-                        st.markdown('<span class="coupon-act-row" style="display:none;"></span>', unsafe_allow_html=True)
-                        _mode_btn("✏️ 加字/調位置", "edit")
-                    with _r2b:
-                        _mode_btn("🖼️ 換底圖", "upload")
-
-                    # 📅 換月份：選月份 → 日期（月底）＋折扣碼（基本碼＋月份字母）自動帶出，各壓在自己記住的位置。
+                    # 📅 換月份：選月份 → 效期（月底）＋折扣碼（基本碼＋月份字母）自動帶出，各壓在自己記住的位置。
                     #    刻意「不寫回成品」→ 雲端那張永遠是空白底圖，不會被上個月的字蓋掉，隨時可再換。
                     if _cmode == "date":
                         if clean_row is None:
-                            st.caption("⚠️ 這個版位還沒存過『乾淨底圖』，壓出來可能會疊到舊的字。"
-                                       "建議重新上傳一次沒有字的底圖並按「✅ 直接儲存原圖（不加字）」。")
+                            st.caption("⚠️ 還沒存乾淨底圖，可能疊到舊字；請按「換底圖」重傳沒有字的圖。")
                         _cd = _parse_codeset(next((r for r in cfg_data if len(r) > 1 and r[0] == f'couponcode_{slot_id}'), None))
                         _W, _H = base_img.width, base_img.height
 
@@ -3377,72 +3432,73 @@ if doc:
                                 y, m = (y + 1, 1) if m == 12 else (y, m + 1)
                             return out
                         _months = _month_list(now.year, now.month, 13)
-                        _mi = st.selectbox("月份", list(range(len(_months))), key=f"qmon_{slot_id}",
-                                           format_func=lambda i: f"{_months[i][0]} 年 {_months[i][1]} 月")
+                        _f1, _f2 = st.columns(2)
+                        _f1.markdown('<span class="cpn-row" style="display:none;"></span>', unsafe_allow_html=True)
+                        _mi = _f1.selectbox("月份", list(range(len(_months))), key=f"qmon_{slot_id}",
+                                            format_func=lambda i: f"{_months[i][0]} 年 {_months[i][1]} 月")
                         _qy, _qm = _months[_mi]
-                        _use_code = st.checkbox("🏷️ 壓上折扣碼", value=bool(_cd), key=f"qcode_on_{slot_id}",
-                                                help="VIP 非公開券：代碼每月換字母（1月A…12月M，跳過 I、O），"
-                                                     "跟 BigSeller 自動延續同一套規則")
-                        _qd = st.text_input("效期日期", value=f"{_qm}/{calendar.monthrange(_qy, _qm)[1]}",
-                                            key=f"qd_{slot_id}_{_qy}{_qm}",
-                                            help="選月份會自動帶月底；要改成別的日期直接改這格")
-                        _qcode, _base_code, _rot = "", "", True
-                        if _use_code:
-                            _base_code = st.text_input("代碼基本碼", value=(_cd.get("base") or "BEIBHD20"),
-                                                       key=f"qbase_{slot_id}",
-                                                       help="不含月份字母，例如 BEIBHD20").strip().upper()
-                            _rot = st.checkbox("代碼每月換字母", value=_cd.get("rotate", True) if _cd else True,
-                                               key=f"qrot_{slot_id}")
-                            _qcode = _month_code(_base_code, _qm) if (_rot and _base_code) else _base_code
-                            st.caption(f"{_qm} 月的折扣碼：**{_qcode}**")
+                        _qd = _f2.text_input("效期至", value=f"{_qm}/{calendar.monthrange(_qy, _qm)[1]}",
+                                             key=f"qd_{slot_id}_{_qy}{_qm}")
+                        _g1, _g2 = st.columns(2)
+                        _g1.markdown('<span class="cpn-row" style="display:none;"></span>', unsafe_allow_html=True)
+                        _base_code = _g1.text_input("折扣碼", value=_cd.get("base", ""), key=f"qbase_{slot_id}",
+                                                    placeholder="不壓就留空").strip().upper()
+                        _rot = _g2.checkbox("每月換字母", value=_cd.get("rotate", True) if _cd else True,
+                                            key=f"qrot_{slot_id}")
+                        # 換字母從哪個月開始（之前的月份照用基本碼，例：10 月仍是 BEIBHD20、11 月起 BEIBHD20L）
+                        _start = int(_cd.get("start") or (_months[1][0] * 100 + _months[1][1]))
 
+                        def _code_for(y, m):
+                            if not _base_code:
+                                return ""
+                            return _month_code(_base_code, m) if (_rot and y * 100 + m >= _start) else _base_code
+                        _qcode = _code_for(_qy, _qm)
                         _qimg = _stamp_month_coupon(base_img, _pos["date"], _qd,
-                                                    _pos["code"] if _use_code else None, _qcode)
-                        _qbuf = BytesIO()
-                        _qimg.save(_qbuf, format="PNG")
-                        st.markdown(
-                            f'<img src="data:image/png;base64,'
-                            f'{base64.b64encode(_qbuf.getvalue()).decode()}" '
-                            f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
-                            f'alt="折價券{display_num}">', unsafe_allow_html=True)
-                        _fn = f"BearJoy_Coupon_{_qy}-{_qm:02d}" + (f"_{_safe_filename(_qcode)}" if _qcode else "")
-                        st.download_button("💻 下載這張", data=_qbuf.getvalue(), file_name=f"{_fn}.png",
-                                           mime="image/png", key=f"qdl_{slot_id}", use_container_width=True)
-                        st.caption("💡 手機長按上圖 → 存到相簿。雲端那張仍是空白底圖，下次可以再換別的月份。")
+                                                    _pos["code"] if _qcode else None, _qcode)
+                        _show_img = _qimg
+                        _dl_name = f"BearJoy_Coupon_{_qy}-{_qm:02d}" + (f"_{_safe_filename(_qcode)}" if _qcode else "")
+                        st.markdown(f"<div class='cpn-sum'>效期至 <b>{_qd}</b>"
+                                    + (f"　折扣碼 <b>{_qcode}</b>" if _qcode else "") + "</div>", unsafe_allow_html=True)
 
-                        # 📦 一次產 12 個月：從選的月份起，每張日期、代碼各自換好，打包成 zip
-                        _zk = f"q12zip_{slot_id}"
-                        if st.button("📦 一次產 12 個月（從選的月份起）", key=f"q12_{slot_id}", use_container_width=True):
+                        # 小工具列：12 個月 zip／調位置／另存新版位（同一排三顆）
+                        _zk, _ak = f"q12zip_{slot_id}", f"qadj_{slot_id}"
+                        _t1, _t2, _t3 = st.columns(3)
+                        _t1.markdown('<span class="cpn-row" style="display:none;"></span>', unsafe_allow_html=True)
+                        if _zk in st.session_state and st.session_state[_zk][2] == (_qy, _qm, _base_code, _rot):
+                            _zdata, _zlabel, _ = st.session_state[_zk]
+                            _t1.download_button("12 張", icon=":material/download:", data=_zdata, file_name=f"BearJoy_Coupon_{_zlabel}.zip",
+                                                mime="application/zip", key=f"q12dl_{slot_id}", use_container_width=True)
+                        elif _t1.button("12 個月", icon=":material/folder_zip:", key=f"q12_{slot_id}", use_container_width=True):
                             import zipfile
                             with st.spinner("產生 12 張中..."):
                                 _zbuf = BytesIO()
                                 with zipfile.ZipFile(_zbuf, "w", zipfile.ZIP_DEFLATED) as _zf:
                                     for _y, _m in _month_list(_qy, _qm, 12):
-                                        _c = (_month_code(_base_code, _m) if _rot else _base_code) if _use_code else ""
+                                        _c = _code_for(_y, _m)
                                         _im = _stamp_month_coupon(base_img, _pos["date"],
                                                                   f"{_m}/{calendar.monthrange(_y, _m)[1]}",
-                                                                  _pos["code"] if _use_code else None, _c)
+                                                                  _pos["code"] if _c else None, _c)
                                         _b = BytesIO()
                                         _im.save(_b, format="PNG")
                                         _zf.writestr(f"{_y}-{_m:02d}" + (f"_{_safe_filename(_c)}" if _c else "") + ".png",
                                                      _b.getvalue())
                                 _end = _month_list(_qy, _qm, 12)[-1]
-                                st.session_state[_zk] = (_zbuf.getvalue(), f"{_qy}{_qm:02d}-{_end[0]}{_end[1]:02d}")
-                        if _zk in st.session_state:
-                            _zdata, _zlabel = st.session_state[_zk]
-                            st.download_button("⬇️ 下載 12 張（zip）", data=_zdata,
-                                               file_name=f"BearJoy_Coupon_{_zlabel}.zip", mime="application/zip",
-                                               key=f"q12dl_{slot_id}", use_container_width=True,
-                                               help="檔名＝年-月_代碼，例如 2027-01_BEIBHD20A.png")
+                                st.session_state[_zk] = (_zbuf.getvalue(), f"{_qy}{_qm:02d}-{_end[0]}{_end[1]:02d}",
+                                                         (_qy, _qm, _base_code, _rot))
+                            st.rerun()
+                        _adj_on = st.session_state.get(_ak, False)
+                        if _t2.button("調位置", icon=":material/tune:", key=f"qadjbtn_{slot_id}", use_container_width=True,
+                                      type="primary" if _adj_on else "secondary"):
+                            st.session_state[_ak] = not _adj_on
+                            st.rerun()
+                        _save_new = _t3.button("另存", icon=":material/add:", key=f"qnew_{slot_id}", use_container_width=True)
 
-                        # 🔧 位置微調：按鈕一下一下推（手機不用拖曳）；第一次用新底圖時先調好按「記住位置」
-                        with st.expander("🔧 調整日期／折扣碼的位置", expanded=not _sv):
-                            _tg = st.radio("要調整", ["日期", "折扣碼"] if _use_code else ["日期"],
-                                           horizontal=True, key=f"qtg_{slot_id}")
+                        # 🔧 位置微調：按鈕一下一下推（手機不用拖曳）；調好按「記住位置」
+                        if _adj_on:
+                            _tg = st.radio("要調整", ["日期", "折扣碼"] if _qcode else ["日期"],
+                                           horizontal=True, key=f"qtg_{slot_id}", label_visibility="collapsed")
                             _p = _pos["code" if _tg == "折扣碼" else "date"]
-                            _big = st.toggle("粗調（一下移動比較多）", key=f"qbig_{slot_id}")
-                            _mv = max(1, int(_W * (0.01 if _big else 0.002)))
-                            _ds = 4 if _big else 1
+                            _mv, _ds = max(1, int(_W * 0.002)), 1
 
                             def _nudge(**kw):
                                 for k, v in kw.items():
@@ -3452,51 +3508,39 @@ if doc:
                                 _p["size"] = max(10, min(int(_p["size"]), 200))
                                 _p["rot"] = max(-180, min(int(_p["rot"]), 180))
                                 st.rerun()
-                            _a1, _a2, _a3, _a4 = st.columns(4)
-                            _a1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
-                            if _a1.button("⬅", key=f"qnl_{slot_id}", use_container_width=True, help="往左移"):
-                                _nudge(x=_p["x"] - _mv)
-                            if _a2.button("➡", key=f"qnr_{slot_id}", use_container_width=True, help="往右移"):
-                                _nudge(x=_p["x"] + _mv)
-                            if _a3.button("⬆", key=f"qnu_{slot_id}", use_container_width=True, help="往上移"):
-                                _nudge(y=_p["y"] - _mv)
-                            if _a4.button("⬇", key=f"qnd_{slot_id}", use_container_width=True, help="往下移"):
-                                _nudge(y=_p["y"] + _mv)
-                            _b1, _b2, _b3, _b4 = st.columns(4)
-                            _b1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
-                            if _b1.button("➖字", key=f"qns_{slot_id}", use_container_width=True, help="字變小"):
-                                _nudge(size=_p["size"] - _ds)
-                            if _b2.button("➕字", key=f"qnb_{slot_id}", use_container_width=True, help="字變大"):
-                                _nudge(size=_p["size"] + _ds)
-                            if _b3.button("↺", key=f"qnrl_{slot_id}", use_container_width=True, help="逆時針轉"):
-                                _nudge(rot=_p["rot"] - 1)
-                            if _b4.button("↻", key=f"qnrr_{slot_id}", use_container_width=True, help="順時針轉"):
-                                _nudge(rot=_p["rot"] + 1)
-                            _p["color"] = st.color_picker("顏色", _p.get("color", "#FFFFFF"),
-                                                          key=f"qcol_{slot_id}_{'code' if _tg == '折扣碼' else 'date'}")
-                            st.caption(f"{_tg}：位置 {_p['x']},{_p['y']}　大小 {_p['size']}　角度 {_p['rot']}°")
-                            if st.button("💾 記住位置（下次直接用）", type="primary", use_container_width=True,
-                                         key=f"qsave_{slot_id}"):
+                            _nb = st.columns(8)
+                            _nb[0].markdown('<span class="cpn-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            for _col, (_lbl, _kw, _hp) in zip(_nb, [
+                                    ("←", {"x": _p["x"] - _mv}, "往左"), ("→", {"x": _p["x"] + _mv}, "往右"),
+                                    ("↑", {"y": _p["y"] - _mv}, "往上"), ("↓", {"y": _p["y"] + _mv}, "往下"),
+                                    ("A-", {"size": _p["size"] - _ds}, "字變小"), ("A+", {"size": _p["size"] + _ds}, "字變大"),
+                                    ("↺", {"rot": _p["rot"] - 1}, "逆時針"), ("↻", {"rot": _p["rot"] + 1}, "順時針")]):
+                                if _col.button(_lbl, key=f"qn{_lbl}_{slot_id}", use_container_width=True):
+                                    _nudge(**_kw)
+                            _s1, _s2 = st.columns([1, 2])
+                            _s1.markdown('<span class="cpn-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            _p["color"] = _s1.color_picker("顏色", _p.get("color", "#FFFFFF"), label_visibility="collapsed",
+                                                           key=f"qcol_{slot_id}_{'code' if _tg == '折扣碼' else 'date'}")
+                            if _s2.button("記住位置", icon=":material/check:", type="primary", use_container_width=True, key=f"qsave_{slot_id}"):
                                 with st.spinner("儲存中..."):
                                     _d = _pos["date"]
                                     _save_kv(ws_cfg, f"coupset_{slot_id}",
                                              f"{_d['x']}|{_d['y']}|{_d['size']}|{_d['rot']}|{_d['color']}|"
                                              f"{(_qd or '').strip().replace('|', '｜')}")
-                                    if _use_code:
+                                    if _base_code:
                                         _c = _pos["code"]
                                         _save_kv(ws_cfg, f"couponcode_{slot_id}",
                                                  f"{_c['x']}|{_c['y']}|{_c['size']}|{_c['rot']}|{_c['color']}|"
-                                                 f"{_base_code}|{1 if _rot else 0}")
+                                                 f"{_base_code}|{1 if _rot else 0}|{_start}")
                                     elif _cd:
-                                        _save_kv(ws_cfg, f"couponcode_{slot_id}", "")   # 取消折扣碼 → 清掉記憶
+                                        _save_kv(ws_cfg, f"couponcode_{slot_id}", "")   # 不壓折扣碼 → 清掉記憶
                                     st.session_state.refresh_cfg = True
+                                    st.session_state[_ak] = False
                                 st.toast("已記住位置，下次換月份直接用。")
                                 st.rerun()
 
-                        # ➕ 這張直接存成「新版位」（插在這格正下方），舊版位原封不動；
-                        #    一併複製乾淨底圖＋日期／代碼位置，新版位之後也能再換月份。
-                        if st.button("➕ 存成新版位（舊的保留）", use_container_width=True,
-                                     key=f"qnew_{slot_id}"):
+                        # ➕ 另存新版位（插在這格正下方）：一併複製乾淨底圖＋日期／折扣碼位置，之後也能再換月份
+                        if _save_new:
                             with st.spinner("建立新版位中..."):
                                 new_id = 1
                                 while new_id in st.session_state.active_slots:
@@ -3513,17 +3557,49 @@ if doc:
                                 ws_cfg.append_row([f"coupset_{new_id}",
                                                    f"{_d['x']}|{_d['y']}|{_d['size']}|{_d['rot']}|{_d['color']}|"
                                                    f"{(_qd or '').strip().replace('|', '｜')}"])
-                                if _use_code:
+                                if _base_code:
                                     _c = _pos["code"]
                                     ws_cfg.append_row([f"couponcode_{new_id}",
                                                        f"{_c['x']}|{_c['y']}|{_c['size']}|{_c['rot']}|{_c['color']}|"
-                                                       f"{_base_code}|{1 if _rot else 0}"])
+                                                       f"{_base_code}|{1 if _rot else 0}|{_start}"])
                                 st.session_state.active_slots.insert(idx + 1, new_id)
                                 trigger_order_save(sheet_url, st.session_state.active_slots)
                                 st.session_state.pop("_decoded_imgs", None)
                                 st.session_state.refresh_cfg = True
                             st.toast(f"已新增版位 {display_num + 1}（{_qy}/{_qm}），舊的版位 {display_num} 沒有動。")
                             st.rerun()
+
+                # 圖：完整原圖當 src、CSS 縮小顯示 → 手機長按存相簿是原畫質
+                #    「加字」打開時下面編輯器有自己的預覽 → 上面不再重複一張
+                if _show_img is not None and _cmode == "edit":
+                    _img_ph.empty()
+                elif _show_img is not None:
+                    _pv = BytesIO()
+                    _show_img.save(_pv, format="PNG")
+                    _img_ph.markdown(
+                        f'<img class="cpn-img" src="data:image/png;base64,{base64.b64encode(_pv.getvalue()).decode()}" '
+                        f'alt="折價券{display_num}">', unsafe_allow_html=True)
+                else:
+                    _img_ph.info("此版位目前為空，請先上傳底圖。")
+
+                # 圖下方一排四顆：換月份／加字／換底圖／下載（按哪顆才展開那一區，再按一次收起）
+                if base_img:
+                    def _mode_btn(col, label, mode, icon):
+                        _on = (_cmode == mode)
+                        if col.button(label, key=f"cm_{mode}_{slot_id}", use_container_width=True, icon=icon,
+                                      type="primary" if _on else "secondary"):
+                            st.session_state[_mkey] = None if _on else mode
+                            st.rerun()
+                    with _act_ph.container():
+                        _a = st.columns(4)
+                        _a[0].markdown('<span class="cpn-row" style="display:none;"></span>', unsafe_allow_html=True)
+                        _mode_btn(_a[0], "換月份", "date", ":material/calendar_month:")
+                        _mode_btn(_a[1], "加字", "edit", ":material/edit:")
+                        _mode_btn(_a[2], "換底圖", "upload", ":material/image:")
+                        _buf = BytesIO()
+                        _show_img.save(_buf, format="PNG")
+                        _a[3].download_button("下載", icon=":material/download:", data=_buf.getvalue(), file_name=f"{_dl_name}.png",
+                                              mime="image/png", key=f"dl_btn_{slot_id}", use_container_width=True)
 
                 # 🖼️ 上傳框只在「換底圖」或空版位時出現
                 new_file = None

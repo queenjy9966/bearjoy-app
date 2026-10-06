@@ -1437,6 +1437,47 @@ def _parse_coupset(row):
     except Exception:
         return {}
 
+# 🏷️ 非公開券代碼每月換：基本碼＋月份字母（1月A…12月M，跳過 I、O 免得客人看成 1、0）
+#    與 BigSeller 油猴（20.優惠券自動展延工具）同一套規則，兩邊算出來的代碼一定一致。
+MONTH_LETTER = "ABCDEFGHJKLM"
+
+def _month_code(base, month):
+    return f"{base}{MONTH_LETTER[month - 1]}"
+
+def _rotate_code_for_month(code, month):
+    """BEIBHD20 / BEIBHD20L 這類非公開碼 → 換成指定月份的字母；不是這種格式就原樣回傳。"""
+    m = re.fullmatch(r"([A-Z0-9]{4}HD\d{1,3})[A-Z]?",(code or "").strip().upper())
+    return _month_code(m.group(1), month) if m else (code or "")
+
+# 代碼壓印預設位置（比例）：依「VIP 尊榮回饋券」乾淨底圖量的——「折扣碼：」右邊空白、券面右上斜約 3 度
+_CODE_DEFAULT = {"x": 0.593, "y": 0.599, "size": 0.0333, "rot": -3}
+_DATE_DEFAULT = {"x": 0.648, "y": 0.641, "size": 0.0333, "rot": -3}
+
+def _parse_codeset(row):
+    """解析代碼壓印記憶 x|y|size|rot|color|基本碼|每月換字母(1/0)。"""
+    if not (row and len(row) > 1):
+        return {}
+    p = str(row[1]).split("|")
+    try:
+        return {"x": int(float(p[0])), "y": int(float(p[1])),
+                "size": int(float(p[2])), "rot": int(float(p[3])),
+                "color": p[4] if len(p) > 4 else "#FFFFFF",
+                "base": p[5] if len(p) > 5 else "",
+                "rotate": (p[6] != "0") if len(p) > 6 else True}
+    except Exception:
+        return {}
+
+def _stamp_month_coupon(base_img, date_pos, date_txt, code_pos=None, code_txt=""):
+    """日期、代碼各壓在自己記住的位置（壓在乾淨底圖上，不會疊字）。"""
+    img = base_img
+    if (date_txt or "").strip():
+        img, _, _ = _stamp_coupon(img, date_txt.strip(), date_pos.get("color", "#FFFFFF"), int(date_pos["size"]),
+                                  int(date_pos["x"]), int(date_pos["y"]), int(date_pos.get("rot", 0)))
+    if code_pos and (code_txt or "").strip():
+        img, _, _ = _stamp_coupon(img, code_txt.strip(), code_pos.get("color", "#FFFFFF"), int(code_pos["size"]),
+                                  int(code_pos["x"]), int(code_pos["y"]), int(code_pos.get("rot", 0)))
+    return img.convert("RGB")
+
 def threaded_update_order(creds_dict, sheet_url, order_str):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -1965,8 +2006,12 @@ if doc:
                     except Exception:
                         st.session_state.saved_repurchase = ("", "")
                 _saved_code, _saved_offer = st.session_state.saved_repurchase
+                # 🏷️ 存的是非公開碼（BEIBHD20…）→ 自動換成本月字母，免得把上個月過期的碼發給客人
+                _month_code_now = _rotate_code_for_month(_saved_code, datetime.now().month)
                 with st.expander("🎁 回購優惠碼（選填）", expanded=bool(_saved_code)):
-                    repurchase_code = st.text_input("回購優惠碼", value=_saved_code, placeholder="例如 BEARJOY50")
+                    repurchase_code = st.text_input("回購優惠碼", value=_month_code_now, placeholder="例如 BEARJOY50")
+                    if _month_code_now and _month_code_now != (_saved_code or "").strip().upper() and repurchase_code == _month_code_now:
+                        st.caption(f"🏷️ 已自動換成本月代碼 {_month_code_now}（每月換字母：1月A…12月M）")
                     repurchase_offer = st.text_input("優惠說明", value=_saved_offer, placeholder="例如 全館滿299折20")
                     if st.button("💾 設為預設範例", use_container_width=True):
                         try:
@@ -2229,7 +2274,10 @@ if doc:
                             c_days, c_code = st.columns(2)
                             c_days.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                             days = c_days.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
-                            wb_code = c_code.text_input("喚回專屬優惠碼（選填）", placeholder="例如 COMEBACK50", key="wb_code")
+                            # 提示用本月的非公開碼（跟回購碼同一套每月換字母規則）
+                            _wb_hint = _rotate_code_for_month(st.session_state.get("saved_repurchase", ("", ""))[0],
+                                                              datetime.now().month) or "COMEBACK50"
+                            wb_code = c_code.text_input("喚回專屬優惠碼（選填）", placeholder=f"例如 {_wb_hint}", key="wb_code")
                             header = data[0]
                             i_acc = header.index("客戶帳號") if "客戶帳號" in header else 0
                             i_last = header.index("最後互動") if "最後互動" in header else 2
@@ -3271,7 +3319,7 @@ if doc:
                     _sv = _parse_coupset(_sv_row)
                     _mkey = f"cmode_{slot_id}"
                     if _mkey not in st.session_state:
-                        st.session_state[_mkey] = "date" if _sv else None   # 記過日期位置 → 預設打開換日期
+                        st.session_state[_mkey] = "date" if _sv else None   # 記過日期位置 → 預設打開換月份
                     _cmode = st.session_state[_mkey]
 
                     def _mode_btn(label, mode):
@@ -3292,7 +3340,7 @@ if doc:
                                            key=f"dl_btn_{slot_id}", use_container_width=True,
                                            help="手機可直接長按上面那張圖 → 存到相簿（原畫質）")
                     with _r1b:
-                        _mode_btn("📅 換日期", "date")
+                        _mode_btn("📅 換月份", "date")
                     _r2a, _r2b = st.columns(2)
                     with _r2a:
                         st.markdown('<span class="coupon-act-row" style="display:none;"></span>', unsafe_allow_html=True)
@@ -3300,66 +3348,182 @@ if doc:
                     with _r2b:
                         _mode_btn("🖼️ 換底圖", "upload")
 
-                    # 📅 快速換日期：打上日期，就用「上次記住的位置／大小／顏色」壓在乾淨底圖上直接出券。
-                    #    刻意「不寫回雲端」→ 雲端那張永遠是空白底圖，不會被上個月的日期蓋掉，隨時可再換。
+                    # 📅 換月份：選月份 → 日期（月底）＋折扣碼（基本碼＋月份字母）自動帶出，各壓在自己記住的位置。
+                    #    刻意「不寫回成品」→ 雲端那張永遠是空白底圖，不會被上個月的字蓋掉，隨時可再換。
                     if _cmode == "date":
                         if clean_row is None:
                             st.caption("⚠️ 這個版位還沒存過『乾淨底圖』，壓出來可能會疊到舊的字。"
                                        "建議重新上傳一次沒有字的底圖並按「✅ 直接儲存原圖（不加字）」。")
-                        if not _sv:
-                            st.caption("還沒記住日期要壓在哪裡。先按上面「✏️ 加字/調位置」喬好位置、按「✅ 確認儲存」一次，"
-                                       "之後每次就能在這裡直接換日期。")
-                        _qd = st.text_input("日期", value="", key=f"qd_{slot_id}",
-                                            placeholder=f"例如 {default_coupon_txt}",
-                                            help="打完馬上出券（用上次記住的位置、大小、顏色）。雲端底圖不會被改動。")
-                        if (_qd or "").strip() and _sv:
-                            _qimg, _, _ = _stamp_coupon(
-                                base_img, _qd.strip(), _sv.get("color", "#FFFFFF"),
-                                int(_sv.get("size", 50)),
-                                int(_sv.get("x", base_img.width // 2)),
-                                int(_sv.get("y", int(base_img.height * 0.7))),
-                                int(_sv.get("rot", 0)))
-                            _qbuf = BytesIO()
-                            _qimg.save(_qbuf, format="PNG")
-                            st.markdown(
-                                f'<img src="data:image/png;base64,'
-                                f'{base64.b64encode(_qbuf.getvalue()).decode()}" '
-                                f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
-                                f'alt="折價券{display_num}">', unsafe_allow_html=True)
-                            st.download_button("💻 下載這張（含日期）", data=_qbuf.getvalue(),
-                                               file_name=f"BearJoy_Coupon_{display_num}_"
-                                                         f"{_safe_filename(_qd.strip())}.png",
-                                               mime="image/png", key=f"qdl_{slot_id}",
-                                               use_container_width=True)
-                            st.caption("💡 手機長按上圖 → 存到相簿。雲端那張仍是空白底圖，下次可以再換別的日期。")
-                            # ➕ 換好日期的這張直接存成「新版位」（插在這格正下方），舊版位原封不動；
-                            #    一併複製乾淨底圖＋壓印位置，新版位之後也能再快速換日期。
-                            if st.button("➕ 存成新版位（舊的保留）", use_container_width=True,
-                                         key=f"qnew_{slot_id}"):
-                                with st.spinner("建立新版位中..."):
-                                    new_id = 1
-                                    while new_id in st.session_state.active_slots:
-                                        new_id += 1
-                                    # 先清掉同編號以前刪除時殘留的底圖／位置記憶，避免混到舊資料
-                                    _nkeys = (f"coupon_{new_id}", f"couponbase_{new_id}",
-                                              f"coupset_{new_id}", f"couponlock_{new_id}")
-                                    for ri in sorted([i + 1 for i, r in enumerate(cfg_data)
-                                                      if r and r[0] in _nkeys], reverse=True):
-                                        ws_cfg.delete_rows(ri)
-                                    ws_cfg.append_row([f"coupon_{new_id}"] + img_to_base64_chunks(_qimg.convert("RGB")))
-                                    ws_cfg.append_row([f"couponbase_{new_id}"] + img_to_base64_chunks(base_img.convert("RGB")))
-                                    _qtxt = _qd.strip().replace("|", "｜")
-                                    ws_cfg.append_row([f"coupset_{new_id}",
-                                                       f"{_sv.get('x', base_img.width // 2)}|"
-                                                       f"{_sv.get('y', int(base_img.height * 0.7))}|"
-                                                       f"{_sv.get('size', 50)}|{_sv.get('rot', 0)}|"
-                                                       f"{_sv.get('color', '#FFFFFF')}|{_qtxt}"])
-                                    st.session_state.active_slots.insert(idx + 1, new_id)
-                                    trigger_order_save(sheet_url, st.session_state.active_slots)
-                                    st.session_state.pop("_decoded_imgs", None)
-                                    st.session_state.refresh_cfg = True
-                                st.toast(f"已新增版位 {display_num + 1}（{_qd.strip()}），舊的版位 {display_num} 沒有動。")
+                        _cd = _parse_codeset(next((r for r in cfg_data if len(r) > 1 and r[0] == f'couponcode_{slot_id}'), None))
+                        _W, _H = base_img.width, base_img.height
+
+                        def _dflt(d):
+                            return {"x": int(d["x"] * _W), "y": int(d["y"] * _H),
+                                    "size": max(10, int(d["size"] * _W)), "rot": d["rot"], "color": "#FFFFFF"}
+                        # 位置先放 session：微調時即時預覽，按「💾 記住位置」才寫回雲端
+                        _pk = f"qpos_{slot_id}"
+                        if _pk not in st.session_state:
+                            _keep = ("x", "y", "size", "rot", "color")
+                            st.session_state[_pk] = {
+                                "date": {k: _sv[k] for k in _keep} if _sv else _dflt(_DATE_DEFAULT),
+                                "code": {k: _cd[k] for k in _keep} if _cd else _dflt(_CODE_DEFAULT),
+                            }
+                        _pos = st.session_state[_pk]
+
+                        def _month_list(y, m, n):
+                            out = []
+                            for _ in range(n):
+                                out.append((y, m))
+                                y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+                            return out
+                        _months = _month_list(now.year, now.month, 13)
+                        _mi = st.selectbox("月份", list(range(len(_months))), key=f"qmon_{slot_id}",
+                                           format_func=lambda i: f"{_months[i][0]} 年 {_months[i][1]} 月")
+                        _qy, _qm = _months[_mi]
+                        _use_code = st.checkbox("🏷️ 壓上折扣碼", value=bool(_cd), key=f"qcode_on_{slot_id}",
+                                                help="VIP 非公開券：代碼每月換字母（1月A…12月M，跳過 I、O），"
+                                                     "跟 BigSeller 自動延續同一套規則")
+                        _qd = st.text_input("效期日期", value=f"{_qm}/{calendar.monthrange(_qy, _qm)[1]}",
+                                            key=f"qd_{slot_id}_{_qy}{_qm}",
+                                            help="選月份會自動帶月底；要改成別的日期直接改這格")
+                        _qcode, _base_code, _rot = "", "", True
+                        if _use_code:
+                            _base_code = st.text_input("代碼基本碼", value=(_cd.get("base") or "BEIBHD20"),
+                                                       key=f"qbase_{slot_id}",
+                                                       help="不含月份字母，例如 BEIBHD20").strip().upper()
+                            _rot = st.checkbox("代碼每月換字母", value=_cd.get("rotate", True) if _cd else True,
+                                               key=f"qrot_{slot_id}")
+                            _qcode = _month_code(_base_code, _qm) if (_rot and _base_code) else _base_code
+                            st.caption(f"{_qm} 月的折扣碼：**{_qcode}**")
+
+                        _qimg = _stamp_month_coupon(base_img, _pos["date"], _qd,
+                                                    _pos["code"] if _use_code else None, _qcode)
+                        _qbuf = BytesIO()
+                        _qimg.save(_qbuf, format="PNG")
+                        st.markdown(
+                            f'<img src="data:image/png;base64,'
+                            f'{base64.b64encode(_qbuf.getvalue()).decode()}" '
+                            f'style="width:300px; max-width:100%; height:auto; border-radius:10px;" '
+                            f'alt="折價券{display_num}">', unsafe_allow_html=True)
+                        _fn = f"BearJoy_Coupon_{_qy}-{_qm:02d}" + (f"_{_safe_filename(_qcode)}" if _qcode else "")
+                        st.download_button("💻 下載這張", data=_qbuf.getvalue(), file_name=f"{_fn}.png",
+                                           mime="image/png", key=f"qdl_{slot_id}", use_container_width=True)
+                        st.caption("💡 手機長按上圖 → 存到相簿。雲端那張仍是空白底圖，下次可以再換別的月份。")
+
+                        # 📦 一次產 12 個月：從選的月份起，每張日期、代碼各自換好，打包成 zip
+                        _zk = f"q12zip_{slot_id}"
+                        if st.button("📦 一次產 12 個月（從選的月份起）", key=f"q12_{slot_id}", use_container_width=True):
+                            import zipfile
+                            with st.spinner("產生 12 張中..."):
+                                _zbuf = BytesIO()
+                                with zipfile.ZipFile(_zbuf, "w", zipfile.ZIP_DEFLATED) as _zf:
+                                    for _y, _m in _month_list(_qy, _qm, 12):
+                                        _c = (_month_code(_base_code, _m) if _rot else _base_code) if _use_code else ""
+                                        _im = _stamp_month_coupon(base_img, _pos["date"],
+                                                                  f"{_m}/{calendar.monthrange(_y, _m)[1]}",
+                                                                  _pos["code"] if _use_code else None, _c)
+                                        _b = BytesIO()
+                                        _im.save(_b, format="PNG")
+                                        _zf.writestr(f"{_y}-{_m:02d}" + (f"_{_safe_filename(_c)}" if _c else "") + ".png",
+                                                     _b.getvalue())
+                                _end = _month_list(_qy, _qm, 12)[-1]
+                                st.session_state[_zk] = (_zbuf.getvalue(), f"{_qy}{_qm:02d}-{_end[0]}{_end[1]:02d}")
+                        if _zk in st.session_state:
+                            _zdata, _zlabel = st.session_state[_zk]
+                            st.download_button("⬇️ 下載 12 張（zip）", data=_zdata,
+                                               file_name=f"BearJoy_Coupon_{_zlabel}.zip", mime="application/zip",
+                                               key=f"q12dl_{slot_id}", use_container_width=True,
+                                               help="檔名＝年-月_代碼，例如 2027-01_BEIBHD20A.png")
+
+                        # 🔧 位置微調：按鈕一下一下推（手機不用拖曳）；第一次用新底圖時先調好按「記住位置」
+                        with st.expander("🔧 調整日期／折扣碼的位置", expanded=not _sv):
+                            _tg = st.radio("要調整", ["日期", "折扣碼"] if _use_code else ["日期"],
+                                           horizontal=True, key=f"qtg_{slot_id}")
+                            _p = _pos["code" if _tg == "折扣碼" else "date"]
+                            _big = st.toggle("粗調（一下移動比較多）", key=f"qbig_{slot_id}")
+                            _mv = max(1, int(_W * (0.01 if _big else 0.002)))
+                            _ds = 4 if _big else 1
+
+                            def _nudge(**kw):
+                                for k, v in kw.items():
+                                    _p[k] = v
+                                _p["x"] = max(0, min(int(_p["x"]), _W))
+                                _p["y"] = max(0, min(int(_p["y"]), _H))
+                                _p["size"] = max(10, min(int(_p["size"]), 200))
+                                _p["rot"] = max(-180, min(int(_p["rot"]), 180))
                                 st.rerun()
+                            _a1, _a2, _a3, _a4 = st.columns(4)
+                            _a1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            if _a1.button("⬅", key=f"qnl_{slot_id}", use_container_width=True, help="往左移"):
+                                _nudge(x=_p["x"] - _mv)
+                            if _a2.button("➡", key=f"qnr_{slot_id}", use_container_width=True, help="往右移"):
+                                _nudge(x=_p["x"] + _mv)
+                            if _a3.button("⬆", key=f"qnu_{slot_id}", use_container_width=True, help="往上移"):
+                                _nudge(y=_p["y"] - _mv)
+                            if _a4.button("⬇", key=f"qnd_{slot_id}", use_container_width=True, help="往下移"):
+                                _nudge(y=_p["y"] + _mv)
+                            _b1, _b2, _b3, _b4 = st.columns(4)
+                            _b1.markdown('<span class="keep-row nudge-row" style="display:none;"></span>', unsafe_allow_html=True)
+                            if _b1.button("➖字", key=f"qns_{slot_id}", use_container_width=True, help="字變小"):
+                                _nudge(size=_p["size"] - _ds)
+                            if _b2.button("➕字", key=f"qnb_{slot_id}", use_container_width=True, help="字變大"):
+                                _nudge(size=_p["size"] + _ds)
+                            if _b3.button("↺", key=f"qnrl_{slot_id}", use_container_width=True, help="逆時針轉"):
+                                _nudge(rot=_p["rot"] - 1)
+                            if _b4.button("↻", key=f"qnrr_{slot_id}", use_container_width=True, help="順時針轉"):
+                                _nudge(rot=_p["rot"] + 1)
+                            _p["color"] = st.color_picker("顏色", _p.get("color", "#FFFFFF"),
+                                                          key=f"qcol_{slot_id}_{'code' if _tg == '折扣碼' else 'date'}")
+                            st.caption(f"{_tg}：位置 {_p['x']},{_p['y']}　大小 {_p['size']}　角度 {_p['rot']}°")
+                            if st.button("💾 記住位置（下次直接用）", type="primary", use_container_width=True,
+                                         key=f"qsave_{slot_id}"):
+                                with st.spinner("儲存中..."):
+                                    _d = _pos["date"]
+                                    _save_kv(ws_cfg, f"coupset_{slot_id}",
+                                             f"{_d['x']}|{_d['y']}|{_d['size']}|{_d['rot']}|{_d['color']}|"
+                                             f"{(_qd or '').strip().replace('|', '｜')}")
+                                    if _use_code:
+                                        _c = _pos["code"]
+                                        _save_kv(ws_cfg, f"couponcode_{slot_id}",
+                                                 f"{_c['x']}|{_c['y']}|{_c['size']}|{_c['rot']}|{_c['color']}|"
+                                                 f"{_base_code}|{1 if _rot else 0}")
+                                    elif _cd:
+                                        _save_kv(ws_cfg, f"couponcode_{slot_id}", "")   # 取消折扣碼 → 清掉記憶
+                                    st.session_state.refresh_cfg = True
+                                st.toast("已記住位置，下次換月份直接用。")
+                                st.rerun()
+
+                        # ➕ 這張直接存成「新版位」（插在這格正下方），舊版位原封不動；
+                        #    一併複製乾淨底圖＋日期／代碼位置，新版位之後也能再換月份。
+                        if st.button("➕ 存成新版位（舊的保留）", use_container_width=True,
+                                     key=f"qnew_{slot_id}"):
+                            with st.spinner("建立新版位中..."):
+                                new_id = 1
+                                while new_id in st.session_state.active_slots:
+                                    new_id += 1
+                                # 先清掉同編號以前刪除時殘留的底圖／位置記憶，避免混到舊資料
+                                _nkeys = (f"coupon_{new_id}", f"couponbase_{new_id}", f"coupset_{new_id}",
+                                          f"couponcode_{new_id}", f"couponlock_{new_id}")
+                                for ri in sorted([i + 1 for i, r in enumerate(cfg_data)
+                                                  if r and r[0] in _nkeys], reverse=True):
+                                    ws_cfg.delete_rows(ri)
+                                ws_cfg.append_row([f"coupon_{new_id}"] + img_to_base64_chunks(_qimg.convert("RGB")))
+                                ws_cfg.append_row([f"couponbase_{new_id}"] + img_to_base64_chunks(base_img.convert("RGB")))
+                                _d = _pos["date"]
+                                ws_cfg.append_row([f"coupset_{new_id}",
+                                                   f"{_d['x']}|{_d['y']}|{_d['size']}|{_d['rot']}|{_d['color']}|"
+                                                   f"{(_qd or '').strip().replace('|', '｜')}"])
+                                if _use_code:
+                                    _c = _pos["code"]
+                                    ws_cfg.append_row([f"couponcode_{new_id}",
+                                                       f"{_c['x']}|{_c['y']}|{_c['size']}|{_c['rot']}|{_c['color']}|"
+                                                       f"{_base_code}|{1 if _rot else 0}"])
+                                st.session_state.active_slots.insert(idx + 1, new_id)
+                                trigger_order_save(sheet_url, st.session_state.active_slots)
+                                st.session_state.pop("_decoded_imgs", None)
+                                st.session_state.refresh_cfg = True
+                            st.toast(f"已新增版位 {display_num + 1}（{_qy}/{_qm}），舊的版位 {display_num} 沒有動。")
+                            st.rerun()
 
                 # 🖼️ 上傳框只在「換底圖」或空版位時出現
                 new_file = None
@@ -3373,13 +3537,14 @@ if doc:
                         with st.spinner("儲存中..."):
                             chunks = img_to_base64_chunks(base_img.convert("RGB"))
                             # 新底圖：成品(coupon_)與乾淨底圖(couponbase_)都存這張、並清掉舊位置記憶(coupset_)
-                            _keys = (f"coupon_{slot_id}", f"couponbase_{slot_id}", f"coupset_{slot_id}")
+                            _keys = (f"coupon_{slot_id}", f"couponbase_{slot_id}", f"coupset_{slot_id}", f"couponcode_{slot_id}")
                             for ri in sorted([i + 1 for i, r in enumerate(cfg_data) if r and r[0] in _keys], reverse=True):
                                 ws_cfg.delete_rows(ri)
                             ws_cfg.append_row([f"coupon_{slot_id}"] + chunks)
                             ws_cfg.append_row([f"couponbase_{slot_id}"] + chunks)
                             st.session_state.pop("_decoded_imgs", None)
                             st.session_state.pop(f"cmode_{slot_id}", None)   # 存好新底圖 → 收起換底圖區
+                            st.session_state.pop(f"qpos_{slot_id}", None)    # 新底圖 → 日期／代碼位置從預設重新起步
                             st.session_state.refresh_cfg = True
                             st.success("已儲存！")
                             st.rerun()

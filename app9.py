@@ -2367,10 +2367,11 @@ if doc:
                             c_days, c_code = st.columns(2)
                             c_days.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
                             days = c_days.number_input("幾天沒互動就算沉睡客?", min_value=1, max_value=365, value=30, step=1, key="sleep_days")
-                            # 提示用本月的非公開碼（跟回購碼同一套每月換字母規則）
-                            _wb_hint = _rotate_code_for_month(st.session_state.get("saved_repurchase", ("", ""))[0],
-                                                              datetime.now().month) or "COMEBACK50"
-                            wb_code = c_code.text_input("喚回專屬優惠碼（選填）", placeholder=f"例如 {_wb_hint}", key="wb_code")
+                            # 直接預填本月的非公開碼（跟回購碼同一套每月換字母規則），不用再自己打
+                            _wb_now = _rotate_code_for_month(st.session_state.get("saved_repurchase", ("", ""))[0],
+                                                             datetime.now().month)
+                            wb_code = c_code.text_input("喚回專屬優惠碼（選填）", value=_wb_now,
+                                                        placeholder="例如 COMEBACK50", key="wb_code")
                             header = data[0]
                             i_acc = header.index("客戶帳號") if "客戶帳號" in header else 0
                             i_last = header.index("最後互動") if "最後互動" in header else 2

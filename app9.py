@@ -877,8 +877,75 @@ GEMINI_PRICES = {
     "gemini-2.5-pro":        {"label": "2.5 Pro ｜付費・最聰明", "in": 1.25, "out": 10.0, "free": False,
                               "ids": ["gemini-2.5-pro"]},
 }
-GEMINI_DEFAULT = "gemini-2.5-flash"  # 預設用「確定可用」的免費款；3 系列保留可手動選
 GEMINI_SAFE_FALLBACK = "gemini-2.5-flash"  # 選的模型整個打不通時的最後保險（已知穩定免費）
+
+# 🟢 Claude（Pro 月費）：本機有裝 Claude Code（claude.exe）就能用，已付月費、不另計費 → 本機預設用它。
+#    雲端（Streamlit）沒有 claude.exe，清單不會出現，照舊用 Gemini。做法同專案7／申訴台。
+def _claude_cli_exe():
+    # 直接叫 claude.exe（不經 claude.cmd 轉手，中文與空字串參數才不會被弄壞）
+    import shutil
+    real = os.path.join(os.environ.get("APPDATA", ""), "npm", "node_modules", "@anthropic-ai",
+                        "claude-code", "bin", "claude.exe")
+    if os.path.exists(real):
+        return real
+    for n in ("claude.exe", "claude.cmd", "claude"):
+        w = shutil.which(n)
+        if w:
+            return w
+    return None
+
+CLAUDE_EXE = _claude_cli_exe()
+CLAUDE_SYSTEM = "你是蝦皮賣場 BearJoy 的客服助理，只用繁體中文。只輸出使用者要求的內容本身，不要多餘說明。"
+if CLAUDE_EXE:
+    # 放在清單最前面；claude=要叫的模型，cost 一律 0（月費內）
+    GEMINI_PRICES = {
+        "claude-sonnet": {"label": "Claude Sonnet ｜月費・不另付費（預設）", "in": 0.0, "out": 0.0, "free": True,
+                          "claude": "sonnet"},
+        "claude-opus":   {"label": "Claude Opus ｜月費・最聰明較慢", "in": 0.0, "out": 0.0, "free": True,
+                          "claude": "opus"},
+        **GEMINI_PRICES,
+    }
+GEMINI_DEFAULT = "claude-sonnet" if CLAUDE_EXE else "gemini-2.5-flash"  # 本機用月費 Claude；雲端用免費款 Gemini
+
+def claude_cli_call(contents, model="sonnet", timeout=240):
+    """用本機 claude.exe（月費登入）回答；contents 同 Gemini 格式：[文字, PIL圖片...]。失敗回 None。
+    圖片先存暫存檔，讓 Claude 用 Read 打開看。"""
+    import subprocess, tempfile, uuid, shutil
+    if not CLAUDE_EXE:
+        return None
+    texts = [c for c in contents if isinstance(c, str)]
+    imgs = [c for c in contents if isinstance(c, Image.Image)]
+    prompt = "\n\n".join(texts)
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)        # 保險：有 API 金鑰會改走 API 計費 → 一律拿掉，只用月費登入
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+    work = os.path.join(tempfile.gettempdir(), "p6_claude", uuid.uuid4().hex[:12])
+    os.makedirs(work, exist_ok=True)
+    try:
+        if imgs:
+            paths = []
+            for i, im in enumerate(imgs):
+                p = os.path.join(work, f"att{i + 1}.png")
+                im.convert("RGB").save(p, "PNG")
+                paths.append(p)
+            prompt += "\n\n【附件】請先用 Read 工具打開下列圖片看清楚內容，再依上面的要求回答：\n" + "\n".join(paths)
+            tools = ["--tools", "Read", "--allowedTools", "Read"]
+        else:
+            tools = ["--tools", ""]           # 純文字不開工具 → 最省月費額度
+        r = subprocess.run([CLAUDE_EXE, "-p", "--model", model, *tools, "--output-format", "json",
+                            "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
+                            "--setting-sources", "", "--system-prompt", CLAUDE_SYSTEM],
+                           input=prompt.encode("utf-8"), capture_output=True, timeout=timeout, cwd=work, env=env,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = r.stdout.decode("utf-8", "replace").strip()
+        j = json.loads(out[out.find("{"):]) if "{" in out else {}
+        if not j or j.get("is_error"):
+            return None
+        return str(j.get("result") or "") or None
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 def _pil_from_upload(uploaded):
     """把 Streamlit file_uploader 的上傳檔轉成 PIL Image（給多模態 API 讀截圖）；失敗回 None。"""
@@ -894,6 +961,10 @@ def gemini_call_costed(api_key, contents, model):
     """呼叫指定 Gemini 模型，回傳 (text, usage)。
     usage = {model, in, out, cost(美金估算), free}。可重複用在任何需要 API 的功能。
     contents 可為 [文字]，或 [文字, PIL圖片]（多模態，讀截圖）。失敗回 (None, usage_or_None)。"""
+    _cm = GEMINI_PRICES.get(model, {}).get("claude")
+    if _cm:   # 月費 Claude：不退回 Gemini（退回會扣預付點數），失敗就回 None
+        text = claude_cli_call(contents, _cm)
+        return text, {"model": model, "in": 0, "out": 0, "cost": 0.0, "free": True, "fellback": False}
     try:
         client = genai.Client(api_key=api_key)
     except Exception:
@@ -1126,7 +1197,8 @@ def ai_render_cost(model_key=None):
     last = st.session_state.get("ai_last_usage")
     total = st.session_state.get("ai_cost_total", 0.0)
     if last:
-        free = "（免費額度內，實際 $0）" if last.get("free") else "（付費模型，會實際扣費）"
+        free = ("（Claude 月費，不另付費）" if str(last.get("model", "")).startswith("claude-")
+                else "（免費額度內，實際 $0）" if last.get("free") else "（付費模型，會實際扣費）")
         used_lbl = GEMINI_PRICES.get(last.get("model", ""), {}).get("label", last.get("model", ""))
         fb = "　⚠️ 你選的模型打不通，已自動改用此款" if last.get("fellback") else ""
         st.caption(f"💰 上次生成（{used_lbl}）：輸入 {last['in']} ＋ 輸出 {last['out']} tokens"
@@ -1276,6 +1348,8 @@ def gemini_generate(api_key, contents, models=None):
     ✨ 速度優化：第一次嘗試不再空等 2 秒，只有「失敗要重試」時才退避等待
     （等待時間隨次數加長，避免觸發免費版流量限制）。
     contents 可為純文字 [prompt]，也可為圖文 [prompt, img]，批次處理共用同一套邏輯。"""
+    if CLAUDE_EXE:   # 本機有月費 Claude → 一律用它，不退回要扣點數的 Gemini
+        return claude_cli_call(contents, "sonnet")
     try:
         client = genai.Client(api_key=api_key)
     except Exception:
@@ -1889,7 +1963,7 @@ def _batch_worker(job, imgs, opts):
                 job["done"] = i + 1
                 continue
             # ✨ 第一張立即處理，之後每張間隔 4 秒，避免免費版流量限制
-            if _called > 0:
+            if _called > 0 and not str(opts["model"]).startswith("claude-"):   # 月費 Claude 沒有流量限制，不用等
                 time.sleep(4)
             _called += 1
             res_text, usage = gemini_call_costed(opts["api_key"], [prompt_base, img], opts["model"])

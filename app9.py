@@ -16,6 +16,7 @@ import re
 import difflib
 import math
 import json
+import html
 
 # 點圖定位元件（沒裝成功就自動退回拉桿，不影響其他功能）
 try:
@@ -678,6 +679,33 @@ st.markdown("""
     [data-testid="stSidebar"] div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] ol {
         margin: 0 0 0.45rem 0 !important; padding-left: 1.1rem !important;
     }
+    /* 🎨 批次評價：三步驟色塊（米白上傳／淡綠設定／淡棕開始），MagisJo 綠 #5b7c65、棕 #a9835e */
+    .st-key-up_b1, .st-key-up_b2, .st-key-up_b3 {
+        border-radius: 12px; padding: 12px 14px 14px; margin-bottom: 4px; gap: 0.55rem !important;
+    }
+    .st-key-up_b1 { background: #fbf9f4; border: 1px solid #e4ddcf; }
+    .st-key-up_b2 { background: #eef2ec; border: 1px solid #d3ddd2; }
+    .st-key-up_b3 { background: #f5eee4; border: 1px solid #e6d8c4; }
+    .up-hd { font-size: 15px; font-weight: 700; color: #3f392f; display: flex; align-items: center; gap: 8px; margin: 0; }
+    .up-no { width: 22px; height: 22px; border-radius: 50%; background: #5b7c65; color: #fff; font-size: 12.5px;
+             display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .st-key-up_b3 .up-no { background: #a9835e; }
+    .st-key-up_b1 [data-testid="stFileUploaderDropzone"] { background: #fff; border: 1.5px dashed #9fb3a3; }
+    .st-key-up_b2 div[data-testid="stExpander"] > details { background: #fff !important; }
+    .st-key-up_b2 [data-testid="stWidgetLabel"] { margin-top: 6px !important; }
+    .st-key-up_b2 [data-testid="stWidgetLabel"] p { font-size: 12.5px !important; color: #8d8371 !important; }
+    .st-key-up_b2 button[data-testid="stBaseButton-pills"] { background: #fff; border-color: #d3ddd2; font-size: 13px; }
+    .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] { background: #5b7c65 !important; border-color: #5b7c65 !important; color: #fff !important; }
+    .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] p { color: #fff !important; }
+    .st-key-up_b3 button[data-testid="stBaseButton-primary"] { background: #5b7c65 !important; border-color: #5b7c65 !important; }
+    /* 結果區：還沒跑的提示塊＋每筆卡片的小標 */
+    .br-empty { background: #f7f4ee; border: 1.5px dashed #d8cfbd; border-radius: 12px; padding: 34px 18px;
+                text-align: center; color: #5b7c65; font-weight: 700; font-size: 15px; line-height: 1.9; }
+    .br-empty span { color: #8d8371; font-weight: 400; font-size: 13px; }
+    .br-rev { background: #f5eee4; border-left: 3px solid #a9835e; border-radius: 6px; padding: 8px 10px;
+              font-size: 13.5px; color: #4a4338; margin-bottom: 4px; }
+    .br-lb { font-size: 13.5px; font-weight: 700; color: #3f392f; margin: 2px 0 -6px; }
+    .br-lb span { font-weight: 400; color: #a39a88; font-size: 12px; margin-left: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -899,9 +927,9 @@ CLAUDE_SYSTEM = "你是蝦皮賣場 BearJoy 的客服助理，只用繁體中文
 if CLAUDE_EXE:
     # 放在清單最前面；claude=要叫的模型，cost 一律 0（月費內）
     GEMINI_PRICES = {
-        "claude-sonnet": {"label": "Claude Sonnet ｜月費・不另付費（預設）", "in": 0.0, "out": 0.0, "free": True,
+        "claude-sonnet": {"label": "Claude Sonnet ｜月費・預設", "in": 0.0, "out": 0.0, "free": True,
                           "claude": "sonnet"},
-        "claude-opus":   {"label": "Claude Opus ｜月費・最聰明較慢", "in": 0.0, "out": 0.0, "free": True,
+        "claude-opus":   {"label": "Claude Opus ｜月費・較慢", "in": 0.0, "out": 0.0, "free": True,
                           "claude": "opus"},
         **GEMINI_PRICES,
     }
@@ -2150,18 +2178,24 @@ if doc:
             with col_up:
                 # 手機版：上傳區與結果區改成上下單欄，框各自吃滿整個螢幕寬（電腦版維持左右並排）
                 st.markdown('<span class="main-stack" style="display:none"></span>', unsafe_allow_html=True)
-                st.markdown("##### ① 上傳好評截圖")
-                files = st.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
+                # 🎨 三個色塊＝三個步驟：米白(上傳)→淡綠(回覆設定)→淡棕(模型＋開始)，一眼看懂先做什麼
+                _blk1 = st.container(key="up_b1")
+                _blk1.markdown('<div class="up-hd"><span class="up-no">1</span>上傳好評截圖</div>', unsafe_allow_html=True)
+                files = _blk1.file_uploader("上傳顧客好評截圖", type=["png", "jpg", "jpeg"], accept_multiple_files=True, label_visibility="collapsed")
 
-                st.markdown("##### ② 回覆設定")
-                cck1, cck2 = st.columns(2, vertical_alignment="center")
-                cck1.markdown('<span class="cck-row" style="display:none"></span>', unsafe_allow_html=True)
-                is_vip_check = cck1.checkbox("🌟 回購語氣")
-                save_screenshots = cck2.checkbox("💾 保存截圖", value=True,
-                                                 help="會把你上傳的截圖存到雲端「評價截圖素材」工作表，之後做素材用。會多花一點同步時間。")
-                save_to_drive = st.checkbox("☁️ 同時備份原圖到 Google Drive 資料夾", value=True,
-                                            help="把上傳的評價原圖存進你的 Drive 資料夾（檔名＝「日期 評價圖-規格」），"
-                                                 "未來開資料夾就能直接挑素材。透過 Apps Script 以你本人身分存，會多花一點同步時間。")
+                _blk2 = st.container(key="up_b2")
+                _blk2.markdown('<div class="up-hd"><span class="up-no">2</span>回覆設定</div>', unsafe_allow_html=True)
+                # 三個開關改成小膠囊（點一下切換、亮綠＝開），窄欄也會自動換行不重疊
+                _opts = ["🌟 回購語氣", "💾 存截圖", "☁️ 備份 Drive"]
+                _on = _blk2.pills(
+                    "點一下切換（亮的＝要做）", _opts, selection_mode="multi", default=_opts[1:], key="batch_opts",
+                    help="🌟 回購語氣：這批都是回購客，回覆用老朋友的語氣。\n\n"
+                         "💾 存截圖：截圖存到雲端「評價截圖素材」工作表，之後做素材用。\n\n"
+                         "☁️ 備份 Drive：原圖存進你的 Drive 資料夾（檔名＝「日期 評價圖-規格」）。\n\n"
+                         "存截圖／備份 Drive 會多花一點同步時間。") or []
+                is_vip_check = _opts[0] in _on
+                save_screenshots = _opts[1] in _on
+                save_to_drive = _opts[2] in _on
                 # 🎁 功能1：回購優惠碼設定收進摺疊區，平時不佔版面、要用再展開
                 if "saved_repurchase" not in st.session_state:
                     try:
@@ -2175,7 +2209,8 @@ if doc:
                 _saved_code, _saved_offer = st.session_state.saved_repurchase
                 # 🏷️ 存的是非公開碼（BEIBHD20…）→ 自動換成本月字母，免得把上個月過期的碼發給客人
                 _month_code_now = _rotate_code_for_month(_saved_code, datetime.now().month)
-                with st.expander("🎁 回購優惠碼（選填）", expanded=bool(_saved_code)):
+                with _blk2.expander(f"🎁 回購優惠碼　{_month_code_now}" if _month_code_now else "🎁 回購優惠碼（選填）",
+                                    expanded=False):
                     repurchase_code = st.text_input("回購優惠碼", value=_month_code_now, placeholder="例如 BEARJOY50")
                     if _month_code_now and _month_code_now != (_saved_code or "").strip().upper() and repurchase_code == _month_code_now:
                         st.caption(f"🏷️ 已自動換成本月代碼 {_month_code_now}（每月換字母：1月A…12月M）")
@@ -2191,27 +2226,31 @@ if doc:
                             st.error(f"儲存失敗：{e}")
 
                 # ✍️ 這批要加強什麼：會一起交給 AI，套進每一則賣場回覆與私訊回覆
-                batch_ins = st.text_input(
-                    "✍️ 這批想加強／調整什麼？（選填）", key="batch_ins",
-                    placeholder="例如：多提一句夏天出遊很適合、語氣再親切一點、提醒可回購")
-                st.caption("留空就照原本語氣寫。跑完之後，每一筆還可以單獨再請 AI 加強。")
+                batch_ins = _blk2.text_input(
+                    "✍️ 這批想加強什麼？（選填）", key="batch_ins",
+                    placeholder="例如：多提一句夏天出遊很適合、語氣再親切一點",
+                    help="留空就照原本語氣寫。跑完之後，每一筆還可以單獨再請 AI 加強。")
 
-                st.markdown("##### ③ 選擇 AI 模型")
+                _blk3 = st.container(key="up_b3")
+                _blk3.markdown('<div class="up-hd"><span class="up-no">3</span>選模型・開始</div>', unsafe_allow_html=True)
                 _bkeys = list(GEMINI_PRICES.keys())
-                batch_model = st.selectbox(
+                batch_model = _blk3.selectbox(
                     "AI 模型", _bkeys, index=_bkeys.index(GEMINI_DEFAULT),
                     format_func=lambda k: GEMINI_PRICES[k]["label"], key="batch_model",
                     label_visibility="collapsed",
-                    help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")
-
-                st.markdown("##### ④ 開始處理")
-                start_btn = st.button("🚀 開始解析並同步", type="primary", use_container_width=True)
+                    help="標「月費」＝Claude 不另付費；標「付費」的 Gemini 才會真的扣費。")
+                start_btn = _blk3.button("🚀 開始解析並同步", type="primary", use_container_width=True)
                 preview_area = st.container()
 
             with col_res:
                 top_success_msg = st.empty()
                 cards_container = st.container()
-                
+                # 還沒跑過：右邊放一塊淡色提示，不讓畫面空一大片
+                if not (batch_job_get() or st.session_state.get("batch_results") or start_btn):
+                    st.markdown("<div class='br-empty'>📋 結果會出現在這裡<br>"
+                                "<span>上傳截圖 → 按「開始解析並同步」，每一筆的賣場回覆與私訊回覆都能直接複製</span></div>",
+                                unsafe_allow_html=True)
+
                 # ▶️ 按下「開始處理」：整批交給背景執行緒，畫面只顯示進度
                 #    （這樣手機把畫面滑掉、螢幕暗掉、甚至換頁，AI 都會繼續寫完。）
                 if start_btn:
@@ -2383,31 +2422,36 @@ if doc:
 
                     with cards_container:
                         for _i, _it in enumerate(_bres):
-                            with st.expander(f"✨ 客戶帳號：{_it['acc']}", expanded=True):
-                                # ✏️ AI 有時會把帳號看錯：這裡可以當場改，按下去就同步雲端
-                                _ac1, _ac2 = st.columns([2, 1], vertical_alignment="bottom")
-                                _ac1.markdown('<span class="keep-row" style="display:none"></span>',
-                                              unsafe_allow_html=True)
-                                _ac1.text_input("👤 客戶帳號（AI 認錯可直接改）", value=_it["acc"],
-                                                key=f"br_acc_{_i}")
-                                if _ac2.button("💾 更正帳號", key=f"br_accfix_{_i}",
-                                               use_container_width=True):
-                                    _batch_fix_account(_i)
-                                st.markdown(f"**📝 原始評價內容:** {_it['rev']}")
-                                st.markdown("**📢 賣場回覆 (點擊右上角複製):**")
+                            # 第一筆展開、其他收起：整批很多筆時不會把頁面拉很長
+                            with st.expander(f"✨ {_i + 1}. {_it['acc']}", expanded=(_i == 0)):
+                                st.markdown(f"<div class='br-rev'>📝 {html.escape(str(_it['rev']))}</div>",
+                                            unsafe_allow_html=True)
+                                st.markdown("<div class='br-lb'>📢 賣場回覆<span>右上角複製</span></div>",
+                                            unsafe_allow_html=True)
                                 st.code(_it["pub"], language="text")
-                                st.markdown("**💌 私訊回覆 (點擊右上角複製):**")
+                                st.markdown("<div class='br-lb'>💌 私訊回覆<span>右上角複製</span></div>",
+                                            unsafe_allow_html=True)
                                 st.code(_it["priv"], language="text")
-                                st.text_input("✍️ 想加強／調整什麼？（AI 會融進整則回覆）",
-                                              key=f"br_ins_{_i}",
-                                              placeholder="例如：多謝謝他提到的材質、語氣再親切一點")
-                                _q1, _q2 = st.columns(2)
-                                if _q1.button("🤖 改寫賣場回覆", key=f"br_pub_{_i}", use_container_width=True):
-                                    _batch_rewrite(_i, "pub", 4)
-                                if _q2.button("🤖 改寫私訊回覆", key=f"br_priv_{_i}", use_container_width=True):
-                                    _batch_rewrite(_i, "priv", 5)
+                                # ✏️ 改帳號／請 AI 改寫：平常收在小按鈕裡，要用才打開
+                                with st.popover("✏️ 修改", use_container_width=False):
+                                    _ac1, _ac2 = st.columns([2, 1], vertical_alignment="bottom")
+                                    _ac1.markdown('<span class="keep-row" style="display:none"></span>',
+                                                  unsafe_allow_html=True)
+                                    _ac1.text_input("👤 客戶帳號（AI 認錯可直接改）", value=_it["acc"],
+                                                    key=f"br_acc_{_i}")
+                                    if _ac2.button("💾 更正", key=f"br_accfix_{_i}", use_container_width=True):
+                                        _batch_fix_account(_i)
+                                    st.text_input("✍️ 想加強什麼？（AI 會融進整則回覆）", key=f"br_ins_{_i}",
+                                                  placeholder="例如：多謝謝他提到的材質、語氣再親切一點")
+                                    _q1, _q2 = st.columns(2)
+                                    _q1.markdown('<span class="keep-row" style="display:none"></span>',
+                                                 unsafe_allow_html=True)
+                                    if _q1.button("🤖 改寫賣場", key=f"br_pub_{_i}", use_container_width=True):
+                                        _batch_rewrite(_i, "pub", 4)
+                                    if _q2.button("🤖 改寫私訊", key=f"br_priv_{_i}", use_container_width=True):
+                                        _batch_rewrite(_i, "priv", 5)
                         ai_render_cost(st.session_state.get("batch_model", GEMINI_DEFAULT))
-                        if st.button("🧹 清掉這批結果", key="br_clear", use_container_width=True):
+                        if st.button("🧹 清掉這批結果", key="br_clear"):
                             for _k in [k for k in list(st.session_state.keys())
                                        if str(k).startswith(("br_ins_", "br_acc_"))]:
                                 st.session_state.pop(_k, None)
@@ -2513,9 +2557,11 @@ if doc:
                                 except Exception as e:
                                     st.caption(f"⚠️ Excel 名單產生失敗（不影響下方訊息）：{e}")
 
-                                for acc, last, gap in sleepers:
-                                    with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
-                                        st.code(_wakeback_msg(acc), language="text")
+                                # 名單放進固定高度的框，超過用滾輪捲，不把整頁拉長
+                                with st.container(height=300):
+                                    for acc, last, gap in sleepers:
+                                        with st.expander(f"💤 {acc}（已 {gap} 天沒互動，最後 {last}）"):
+                                            st.code(_wakeback_msg(acc), language="text")
                             elif parsed == 0:
                                 st.warning("讀不到「最後互動」日期，請確認 VIP名單 的日期格式為 2026-06-02。")
                             else:
@@ -3092,11 +3138,11 @@ if doc:
                     else:
                         # 👁️ 檢視模式：標題＋分類標籤＋可複製的完整範本
                         tag = f"`{r['分類']}`　" if (r["分類"] or "").strip() else ""
-                        st.markdown(f"#### {tag}{r['問題標題'] or '（未命名問題）'}")
-                        # 📂 內容改成「下拉展開才看」：清單保持清爽，要用哪一則再點開複製
-                        _preview = " ".join(str(r["建議回覆範本"] or "").split())[:36]
-                        with st.expander(f"👀 展開看完整內容／複製　{('｜' + _preview + '…') if _preview else ''}",
-                                         expanded=False):
+                        # 🧩 精簡卡片：標題＋編輯／刪除小鍵同一排；回覆範本收在一行的展開列，要用才點開
+                        _c0, _c2, _c3 = st.columns([5, 1, 1], vertical_alignment="center")
+                        _c0.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
+                        _c0.markdown(f"**{tag}{r['問題標題'] or '（未命名問題）'}**")
+                        with st.expander("👀 回覆範本（點開複製）", expanded=False):
                             if (r["客戶問題範例"] or "").strip():
                                 st.markdown(f"<div style='color:#798571; margin-bottom:6px;'>💬 "
                                             f"{r['客戶問題範例']}</div>", unsafe_allow_html=True)
@@ -3104,12 +3150,11 @@ if doc:
                                 st.code(r["建議回覆範本"], language="text")
                             else:
                                 st.caption("這筆還沒有建議回覆範本。")
-                        _c1, _c2, _c3 = st.columns([2, 1, 1])
-                        _meta = " · ".join([x for x in [(r["關鍵字"] or "").strip(),
-                                                        (r["更新時間"] or "").strip()] if x])
-                        if _meta:
-                            _c1.caption(_meta)
-                        if _c2.button("✏️ 編輯", key=f"qa_edit_btn_{r['_row']}", use_container_width=True):
+                            _meta = " · ".join([x for x in [(r["關鍵字"] or "").strip(),
+                                                            (r["更新時間"] or "").strip()] if x])
+                            if _meta:
+                                st.caption(_meta)
+                        if _c2.button("✏️", key=f"qa_edit_btn_{r['_row']}", help="編輯", use_container_width=True):
                             st.session_state.qa_edit = r["_row"]
                             st.session_state[f"qa_e_title_{r['_row']}"] = r["問題標題"]
                             st.session_state[f"qa_e_q_{r['_row']}"] = r["客戶問題範例"]
@@ -3135,7 +3180,7 @@ if doc:
                                 st.session_state.pop("qa_del", None)
                                 st.rerun()
                         else:
-                            if _c3.button("🗑️ 刪除", key=f"qa_del_btn_{r['_row']}", use_container_width=True):
+                            if _c3.button("🗑️", key=f"qa_del_btn_{r['_row']}", help="刪除", use_container_width=True):
                                 st.session_state.qa_del = r["_row"]
                                 st.rerun()
 

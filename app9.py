@@ -698,6 +698,25 @@ st.markdown("""
     .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] { background: #5b7c65 !important; border-color: #5b7c65 !important; color: #fff !important; }
     .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] p { color: #fff !important; }
     .st-key-up_b3 button[data-testid="stBaseButton-primary"] { background: #5b7c65 !important; border-color: #5b7c65 !important; }
+    /* 步驟標題下方留距：避免手機上下拉選單蓋住標題 */
+    .st-key-up_b3 [data-testid="stSelectbox"], .st-key-up_b1 [data-testid="stFileUploader"] { margin-top: 8px !important; }
+    /* 🎨 其他頁面也用色塊：cbg_=淡綠、cbb_=淡棕、cbc_=米白（key 前綴決定顏色） */
+    div[data-testid="stVerticalBlockBorderWrapper"][class*="st-key-cbg_"], [class*="st-key-cbg_"] { background: #eef2ec !important; border-color: #d3ddd2 !important; }
+    div[data-testid="stVerticalBlockBorderWrapper"][class*="st-key-cbb_"], [class*="st-key-cbb_"] { background: #f5eee4 !important; border-color: #e6d8c4 !important; }
+    div[data-testid="stVerticalBlockBorderWrapper"][class*="st-key-cbc_"], [class*="st-key-cbc_"] { background: #fbf9f4 !important; border-color: #e4ddcf !important; }
+    [class*="st-key-cbg_"] h3 { border-left-color: #5b7c65 !important; }
+    [class*="st-key-cbb_"] h3 { border-left-color: #a9835e !important; }
+    /* 問題庫卡片：標題一排、✏️🗑️ 小方鍵靠右（手機也不拆行） */
+    [class*="st-key-qacard_"] { background: #fff !important; border-radius: 10px !important; padding: 2px 10px 8px !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) { flex-wrap: nowrap !important; gap: 6px !important; align-items: center !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) > div:is([data-testid="column"],[data-testid="stColumn"]):first-child { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) > div:is([data-testid="column"],[data-testid="stColumn"]):not(:first-child) { flex: 0 0 34px !important; min-width: 34px !important; max-width: 34px !important; width: 34px !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton > button { height: 30px !important; min-height: 30px !important; width: 34px !important; padding: 0 !important;
+        background: #f0ece2 !important; border: 1px solid #e0d9c9 !important; color: #3f392f !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton > button:hover { background: #e6dfd0 !important; }
+    .qa-tag { display: inline-block; background: #eef2ec; color: #5b7c65; font-size: 12px; font-weight: 700;
+              border-radius: 6px; padding: 1px 7px; margin-right: 6px; vertical-align: 1px; }
+    .qa-title { font-size: 15px; font-weight: 700; color: #3f392f; line-height: 1.5; }
     /* 結果區：還沒跑的提示塊＋每筆卡片的小標 */
     .br-empty { background: #f7f4ee; border: 1.5px dashed #d8cfbd; border-radius: 12px; padding: 34px 18px;
                 text-align: center; color: #5b7c65; font-weight: 700; font-size: 15px; line-height: 1.9; }
@@ -934,6 +953,9 @@ if CLAUDE_EXE:
         **GEMINI_PRICES,
     }
 GEMINI_DEFAULT = "claude-sonnet" if CLAUDE_EXE else "gemini-2.5-flash"  # 本機用月費 Claude；雲端用免費款 Gemini
+# 🎯 下拉選單只列常用款（選項太多看不懂）：本機＝Claude 月費＋Gemini 免費；雲端＝Gemini 免費＋付費聰明款
+MODEL_CHOICES = [k for k in ("claude-sonnet", "gemini-2.5-flash", "gemini-2.5-pro") if k in GEMINI_PRICES]
+MODEL_NOTE = "" if CLAUDE_EXE else "Claude 月費只能在電腦版用（雲端主機沒有登入你的 Claude），手機／網路版用 Gemini 免費款。"
 
 def claude_cli_call(contents, model="sonnet", timeout=240):
     """用本機 claude.exe（月費登入）回答；contents 同 Gemini 格式：[文字, PIL圖片...]。失敗回 None。
@@ -2233,12 +2255,12 @@ if doc:
 
                 _blk3 = st.container(key="up_b3")
                 _blk3.markdown('<div class="up-hd"><span class="up-no">3</span>選模型・開始</div>', unsafe_allow_html=True)
-                _bkeys = list(GEMINI_PRICES.keys())
+                _bkeys = MODEL_CHOICES
                 batch_model = _blk3.selectbox(
                     "AI 模型", _bkeys, index=_bkeys.index(GEMINI_DEFAULT),
                     format_func=lambda k: GEMINI_PRICES[k]["label"], key="batch_model",
                     label_visibility="collapsed",
-                    help="標「月費」＝Claude 不另付費；標「付費」的 Gemini 才會真的扣費。")
+                    help="標「月費」＝Claude 不另付費；標「付費」的 Gemini 才會真的扣費。" + MODEL_NOTE)
                 start_btn = _blk3.button("🚀 開始解析並同步", type="primary", use_container_width=True)
                 preview_area = st.container()
 
@@ -2461,7 +2483,7 @@ if doc:
                             st.rerun()
 
         with tab2:
-            with st.container(border=True):
+            with st.container(border=True, key="cbg_vip"):
                 section_block("👑", "VIP 顧客戰情室", "所有與你互動過的顧客名單與互動次數。最多顯示 5 筆，其餘用表格右側滾輪查看。")
                 if doc:
                     try:
@@ -2591,7 +2613,7 @@ if doc:
             review_pool = st.session_state.review_pool
 
             # 📊 大區塊一：顧客最愛優點分析
-            with st.container(border=True):
+            with st.container(border=True, key="cbb_insight"):
                 section_block("📊", "顧客最愛優點分析", "選規格 → 統整該款顧客最愛優點，直接拿去寫蝦皮標題與賣點。")
                 _specs_all = sorted({_review_spec(r[2]) for r in review_pool if _review_spec(r[2])})
                 fic1, fic2 = st.columns(2)
@@ -2680,7 +2702,7 @@ if doc:
                             st.error(_mtext)
 
             # 🖼️ 大區塊二：一鍵生成顧客好評圖
-            with st.container(border=True):
+            with st.container(border=True, key="cbc_revimg"):
                 section_block("🖼️", "一鍵生成「顧客好評圖」", "貼蝦皮置頂、IG、FB、LINE，提升新客下單信任感。")
                 SIZE_PRESETS = {
                     "正方形 1:1（IG / 蝦皮 1080×1080）": (1080, 1080),
@@ -2905,7 +2927,7 @@ if doc:
         # 💌 Tab5：私訊查詢（搜尋客戶 → 看當初那則評價 → 複製要私訊的內容；不做狀態管理）
         # ==========================================
         with tab5:
-            with st.container(border=True):
+            with st.container(border=True, key="cbg_dm"):
                 section_block("💌", "私訊查詢",
                               "公開回覆先發、私訊過幾天再回時用這裡：打客戶帳號（或評價裡的任何字）就會叫出"
                               "當初那則評價，以及當時幫你寫好的私訊內容，點右上角圖示複製直接貼給客人。")
@@ -2932,7 +2954,7 @@ if doc:
 
                         _searching = bool((dm_kw or "").strip())
                         shown_dm = [r for r in dm_rows if _dm_match(r)]
-                        _limit = len(shown_dm) if _searching else 8
+                        _limit = len(shown_dm) if _searching else 0   # 沒搜尋不列，畫面保持乾淨
 
                         if not dm_rows:
                             st.info("還沒有任何紀錄。到「批次評價處理」跑過一批評價之後，私訊內容就會出現在這裡。")
@@ -2941,7 +2963,7 @@ if doc:
                             if not shown_dm:
                                 st.info("找不到符合的紀錄，換個關鍵字試試（帳號大小寫沒關係）。")
                         else:
-                            st.caption(f"共 {len(dm_rows)} 筆紀錄，先顯示最新 8 筆；要找特定客人請在上面搜尋。")
+                            st.caption(f"共 {len(dm_rows)} 筆紀錄；在上面打客戶帳號或評價裡的字就會出現。")
 
                         for r in shown_dm[:_limit]:
                             with st.container(border=True):
@@ -3049,7 +3071,7 @@ if doc:
             # 📜 清單放進固定高度的捲動框：超過 3 筆就在框內滑，不必把整頁滑到很下面才看到下方功能
             _qa_box = st.container(height=560) if len(shown) > 3 else st.container()
             for r in shown:
-                with _qa_box, st.container(border=True):
+                with _qa_box, st.container(border=True, key=f"qacard_{r['_row']}"):
                     if st.session_state.get("qa_edit") == r["_row"]:
                         # ✏️ 編輯模式
                         _rw = r["_row"]
@@ -3139,9 +3161,12 @@ if doc:
                         # 👁️ 檢視模式：標題＋分類標籤＋可複製的完整範本
                         tag = f"`{r['分類']}`　" if (r["分類"] or "").strip() else ""
                         # 🧩 精簡卡片：標題＋編輯／刪除小鍵同一排；回覆範本收在一行的展開列，要用才點開
-                        _c0, _c2, _c3 = st.columns([5, 1, 1], vertical_alignment="center")
+                        _c0, _c2, _c3 = st.columns([8, 1, 1], vertical_alignment="center", gap="small")
                         _c0.markdown('<span class="keep-row" style="display:none"></span>', unsafe_allow_html=True)
-                        _c0.markdown(f"**{tag}{r['問題標題'] or '（未命名問題）'}**")
+                        _tg = (f'<span class="qa-tag">{html.escape(r["分類"].strip())}</span>'
+                               if (r["分類"] or "").strip() else "")
+                        _c0.markdown(f'<div class="qa-title">{_tg}{html.escape(r["問題標題"] or "（未命名問題）")}</div>',
+                                     unsafe_allow_html=True)
                         with st.expander("👀 回覆範本（點開複製）", expanded=False):
                             if (r["客戶問題範例"] or "").strip():
                                 st.markdown(f"<div style='color:#798571; margin-bottom:6px;'>💬 "
@@ -3376,7 +3401,7 @@ if doc:
 
             # 🤖 AI 設定（不常動，收在最後，不要一開頁就一大排）
             with st.expander("🤖 AI 模型與花費（預設免費款）", expanded=False):
-                _mkeys = list(GEMINI_PRICES.keys())
+                _mkeys = MODEL_CHOICES
                 st.selectbox("AI 模型", _mkeys, index=_mkeys.index(GEMINI_DEFAULT),
                              format_func=lambda k: GEMINI_PRICES[k]["label"], key="qa_model",
                              help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")

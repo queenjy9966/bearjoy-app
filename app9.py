@@ -711,9 +711,12 @@ st.markdown("""
     [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) { flex-wrap: nowrap !important; gap: 6px !important; align-items: center !important; }
     [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) > div:is([data-testid="column"],[data-testid="stColumn"]):first-child { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; }
     [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) > div:is([data-testid="column"],[data-testid="stColumn"]):not(:first-child) { flex: 0 0 34px !important; min-width: 34px !important; max-width: 34px !important; width: 34px !important; }
-    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton > button { height: 30px !important; min-height: 30px !important; width: 34px !important; padding: 0 !important;
-        background: #f0ece2 !important; border: 1px solid #e0d9c9 !important; color: #3f392f !important; }
-    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton > button:hover { background: #e6dfd0 !important; }
+    /* ⚠️ 按鈕有 help 說明時外面會多包一層 tooltip，所以用「.stButton button」（不用 >），否則對不到、被預設內距切掉圖示 */
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton button { height: 32px !important; min-height: 32px !important; width: 34px !important; min-width: 34px !important; padding: 0 !important;
+        background: #f0ece2 !important; border: 1px solid #e0d9c9 !important; color: #3f392f !important;
+        display: inline-flex !important; align-items: center !important; justify-content: center !important; overflow: visible !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton button * { margin: 0 !important; padding: 0 !important; font-size: 15px !important; line-height: 1 !important; overflow: visible !important; }
+    [class*="st-key-qacard_"] div[data-testid="stHorizontalBlock"]:has(.keep-row) .stButton button:hover { background: #e6dfd0 !important; }
     .qa-tag { display: inline-block; background: #eef2ec; color: #5b7c65; font-size: 12px; font-weight: 700;
               border-radius: 6px; padding: 1px 7px; margin-right: 6px; vertical-align: 1px; }
     .qa-title { font-size: 15px; font-weight: 700; color: #3f392f; line-height: 1.5; }
@@ -913,15 +916,15 @@ def qa_delete(ws, row):
 #    Pro 系列 2026-04 起取消免費額度、純付費。未來新模型在此增修即可。
 #    ids：同一款的候選 API 代號（preview→正式可能改名），呼叫時依序嘗試，避免改版就失效。
 GEMINI_PRICES = {
-    "gemini-2.5-flash":      {"label": "2.5 Flash ｜免費額度・預設穩定", "in": 0.30, "out": 2.50, "free": True,
+    "gemini-2.5-flash":      {"label": "2.5 Flash ｜預付點數・便宜穩定", "in": 0.30, "out": 2.50, "free": False,
                               "ids": ["gemini-2.5-flash"]},
-    "gemini-2.5-flash-lite": {"label": "2.5 Flash-Lite ｜免費額度・便宜快", "in": 0.10, "out": 0.40, "free": True,
+    "gemini-2.5-flash-lite": {"label": "2.5 Flash-Lite ｜預付點數・最便宜", "in": 0.10, "out": 0.40, "free": False,
                               "ids": ["gemini-2.5-flash-lite"]},
     "gemini-3-flash":        {"label": "3 Flash ｜最新（需帳號已開放）", "in": 0.50, "out": 3.00, "free": True,
                               "ids": ["gemini-3-flash", "gemini-3-flash-preview"]},
     "gemini-3.1-flash-lite": {"label": "3.1 Flash-Lite ｜最新最省（需帳號已開放）", "in": 0.25, "out": 1.50, "free": True,
                               "ids": ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview"]},
-    "gemini-2.5-pro":        {"label": "2.5 Pro ｜付費・最聰明", "in": 1.25, "out": 10.0, "free": False,
+    "gemini-2.5-pro":        {"label": "2.5 Pro ｜預付點數・較貴最聰明", "in": 1.25, "out": 10.0, "free": False,
                               "ids": ["gemini-2.5-pro"]},
 }
 GEMINI_SAFE_FALLBACK = "gemini-2.5-flash"  # 選的模型整個打不通時的最後保險（已知穩定免費）
@@ -952,10 +955,10 @@ if CLAUDE_EXE:
                           "claude": "opus"},
         **GEMINI_PRICES,
     }
-GEMINI_DEFAULT = "claude-sonnet" if CLAUDE_EXE else "gemini-2.5-flash"  # 本機用月費 Claude；雲端用免費款 Gemini
-# 🎯 下拉選單只列常用款（選項太多看不懂）：本機＝Claude 月費＋Gemini 免費；雲端＝Gemini 免費＋付費聰明款
+GEMINI_DEFAULT = "claude-sonnet" if CLAUDE_EXE else "gemini-2.5-flash"  # 本機用月費 Claude；雲端用 Gemini（扣預付點數）
+# 🎯 下拉選單只列常用款（選項太多看不懂）：本機＝Claude 月費＋Gemini；雲端＝Gemini（都扣預付點數）
 MODEL_CHOICES = [k for k in ("claude-sonnet", "gemini-2.5-flash", "gemini-2.5-pro") if k in GEMINI_PRICES]
-MODEL_NOTE = "" if CLAUDE_EXE else "Claude 月費只能在電腦版用（雲端主機沒有登入你的 Claude），手機／網路版用 Gemini 免費款。"
+MODEL_NOTE = "" if CLAUDE_EXE else "Claude 月費只能在電腦版用（雲端主機沒有登入你的 Claude），手機／網路版用 Gemini（2026-10 起 Google 改預付，點數用完就不能用）。"
 
 def claude_cli_call(contents, model="sonnet", timeout=240):
     """用本機 claude.exe（月費登入）回答；contents 同 Gemini 格式：[文字, PIL圖片...]。失敗回 None。
@@ -1248,7 +1251,7 @@ def ai_render_cost(model_key=None):
     total = st.session_state.get("ai_cost_total", 0.0)
     if last:
         free = ("（Claude 月費，不另付費）" if str(last.get("model", "")).startswith("claude-")
-                else "（免費額度內，實際 $0）" if last.get("free") else "（付費模型，會實際扣費）")
+                else "（免費額度內，實際 $0）" if last.get("free") else "（扣 Gemini 預付點數）")
         used_lbl = GEMINI_PRICES.get(last.get("model", ""), {}).get("label", last.get("model", ""))
         fb = "　⚠️ 你選的模型打不通，已自動改用此款" if last.get("fellback") else ""
         st.caption(f"💰 上次生成（{used_lbl}）：輸入 {last['in']} ＋ 輸出 {last['out']} tokens"
@@ -2260,7 +2263,7 @@ if doc:
                     "AI 模型", _bkeys, index=_bkeys.index(GEMINI_DEFAULT),
                     format_func=lambda k: GEMINI_PRICES[k]["label"], key="batch_model",
                     label_visibility="collapsed",
-                    help="標「月費」＝Claude 不另付費；標「付費」的 Gemini 才會真的扣費。" + MODEL_NOTE)
+                    help="標「月費」＝Claude 不另付費；標「預付點數」的 Gemini 會扣 Google 預付點數，點數用完就不能用。" + MODEL_NOTE)
                 start_btn = _blk3.button("🚀 開始解析並同步", type="primary", use_container_width=True)
                 preview_area = st.container()
 
@@ -3404,7 +3407,7 @@ if doc:
                 _mkeys = MODEL_CHOICES
                 st.selectbox("AI 模型", _mkeys, index=_mkeys.index(GEMINI_DEFAULT),
                              format_func=lambda k: GEMINI_PRICES[k]["label"], key="qa_model",
-                             help="預設為免費額度的推薦款；標「付費」的模型才會真的扣費。")
+                             help="標「月費」＝Claude 不另付費；標「預付點數」的 Gemini 會扣 Google 預付點數。" + MODEL_NOTE)
                 ai_render_cost(st.session_state.get("qa_model", GEMINI_DEFAULT))
 
     # ==========================================

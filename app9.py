@@ -156,6 +156,8 @@ _require_login()
 st.markdown("""
 <style>
     .stApp { background-color: #FAF8F5; }
+    /* 頂部工具列（Fork／GitHub 那一條）原本是白底 → 改成跟頁面同色，不再一條白白的 */
+    header[data-testid="stHeader"], [data-testid="stHeader"] { background: #FAF8F5 !important; }
     .block-container { padding-top: 2.9rem !important; padding-bottom: 1rem !important; max-width: 1100px; }
 
     /* ✨ 字級層次：大標 → 中標 → 小標 → 註解小字，一眼分得出輕重 */
@@ -692,8 +694,13 @@ st.markdown("""
     .st-key-up_b3 .up-no { background: #a9835e; }
     .st-key-up_b1 [data-testid="stFileUploaderDropzone"] { background: #fff; border: 1.5px dashed #9fb3a3; }
     .st-key-up_b2 div[data-testid="stExpander"] > details { background: #fff !important; }
-    .st-key-up_b2 [data-testid="stWidgetLabel"] { margin-top: 6px !important; }
+    .st-key-up_b2 [data-testid="stWidgetLabel"] { margin-top: 6px !important; margin-bottom: 6px !important; min-height: 22px !important; }
     .st-key-up_b2 [data-testid="stWidgetLabel"] p { font-size: 12.5px !important; color: #8d8371 !important; }
+    /* 三顆膠囊固定排成一排（電腦版），不換行 */
+    .st-key-up_b2 [data-testid="stButtonGroup"] div:has(> button) { flex-wrap: nowrap !important; gap: 6px !important; }
+    .st-key-up_b2 button[data-testid="stBaseButton-pills"], .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] {
+        padding: 2px 10px !important; min-height: 32px !important; white-space: nowrap !important; flex: 0 1 auto !important; }
+    @media (max-width: 380px) { .st-key-up_b2 [data-testid="stButtonGroup"] div:has(> button) { flex-wrap: wrap !important; } }
     .st-key-up_b2 button[data-testid="stBaseButton-pills"] { background: #fff; border-color: #d3ddd2; font-size: 13px; }
     .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] { background: #5b7c65 !important; border-color: #5b7c65 !important; color: #fff !important; }
     .st-key-up_b2 button[data-testid="stBaseButton-pillsActive"] p { color: #fff !important; }
@@ -2199,7 +2206,8 @@ if doc:
         tab1, tab2, tab3, tab5 = st.tabs(["批次評價處理", "VIP 顧客管理", "好評洞察 / 素材", "私訊查詢"])
 
         with tab1:
-            col_up, col_res = st.columns([1, 1.5], gap="large")
+            # 左邊操作區加寬、右邊結果區縮窄（使用者 11/15 反映：結果區太寬、左邊太窄）
+            col_up, col_res = st.columns([1.25, 1], gap="large")
             with col_up:
                 # 手機版：上傳區與結果區改成上下單欄，框各自吃滿整個螢幕寬（電腦版維持左右並排）
                 st.markdown('<span class="main-stack" style="display:none"></span>', unsafe_allow_html=True)

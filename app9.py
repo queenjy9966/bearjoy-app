@@ -137,6 +137,22 @@ def _require_login():
         need = st.secrets.get("app_password", "")
     except Exception:
         need = ""
+    # 📱 本機版給手機（Tailscale 通道）連：密碼放同資料夾 local_password.txt（第一行），
+    #    在電腦本身開（localhost）免密碼；手機從通道連進來才要輸入。此檔不會推上雲端。
+    if not need:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_password.txt"),
+                      encoding="utf-8-sig") as _f:
+                need = (_f.readline() or "").strip()
+        except Exception:
+            need = ""
+        if need:
+            try:
+                _host = (st.context.headers.get("Host") or "").split(":")[0].lower()
+            except Exception:
+                _host = ""
+            if _host in ("localhost", "127.0.0.1"):
+                return
     if not need or st.session_state.get("_authed"):
         return
     st.markdown("### 🔒 BearJoy 智能客服系統")
@@ -2011,6 +2027,40 @@ def _batch_worker(job, imgs, opts):
             except Exception as e:
                 job["notes"].append(f"⚠️ 讀不到截圖指紋，這批無法事先擋重複（仍會在寫入前比內容）：{str(e)[:80]}")
 
+        # 🔁 截圖素材／Drive 去重（11/15）：同一則評價（同帳號＋同評價時間或內容相似）只留一份。
+        #    素材：以前存過 → 刪掉舊那列、存最新的（等於覆蓋）；Drive：以前備份過 → 不再上傳。
+        #    「以前的紀錄」來自 回覆紀錄（紀錄時間＝素材列的時間戳）＋本批已處理的。
+        known_revs = []           # (帳號小寫, 正規化內容, 評價時間, 素材時間戳 YYYYmmdd_HHMMSS)
+        ws_mat, mat_keys, ws_drv, drv_rows = None, [], None, []
+        if doc_bg is not None:
+            try:
+                for _r in get_or_create_ws(doc_bg, "回覆紀錄").get_all_values()[1:]:
+                    if len(_r) > 2 and _r[1]:
+                        try:
+                            _st = datetime.strptime(_r[0].strip(), "%Y-%m-%d %H:%M:%S").strftime("%Y%m%d_%H%M%S")
+                        except Exception:
+                            _st = ""
+                        known_revs.append((_r[1].strip().lower(), _rev_norm(_r[2]),
+                                           (_r[5] if len(_r) > 5 else ""), _st))
+            except Exception as e:
+                job["notes"].append(f"⚠️ 讀不到回覆紀錄，這批截圖素材無法比對重複：{str(e)[:80]}")
+            if opts.get("save_screenshots"):
+                try:
+                    ws_mat = get_or_create_ws(doc_bg, "評價截圖素材")
+                    mat_keys = ws_mat.col_values(1)
+                except Exception:
+                    ws_mat = None
+            if opts.get("save_to_drive"):
+                try:
+                    ws_drv = get_or_create_ws(doc_bg, "Drive備份紀錄")
+                    drv_rows = ws_drv.get_all_values()
+                    if not drv_rows:
+                        ws_drv.append_row(["客戶帳號", "評價時間", "評價內容(正規化)", "Drive檔名", "備份時間"])
+                    drv_rows = [(_r + [""] * 5)[:5] for _r in drv_rows[1:] if _r and _r[0]]
+                except Exception as e:
+                    ws_drv = None
+                    job["notes"].append(f"⚠️ 讀不到 Drive備份紀錄，這批 Drive 無法比對重複：{str(e)[:80]}")
+
         results = []
         _called = 0
         for i, (fname, img) in enumerate(imgs):
@@ -2063,18 +2113,34 @@ def _batch_worker(job, imgs, opts):
                 priv = priv + (f"\n\nP.S. 送您專屬回購碼 👉 {opts['repurchase_code']}{offer_txt}"
                                f"\n下次下單輸入即可享優惠，期待再為您服務 🎁")
             now = datetime.now()
+            _acc_k, _nv, _nt = acc.strip().lower(), _rev_norm(rev), rtime
+            _same_stamps = {s for a, v, t, s in known_revs
+                            if s and a == _acc_k and _same_review(v, t, _nv, _nt)}
 
-            # 💾 保存原始評價截圖到雲端，供日後做素材
-            if opts.get("save_screenshots") and doc_bg is not None:
+            # 💾 保存原始評價截圖到雲端，供日後做素材（同一則評價只留最新一份）
+            if opts.get("save_screenshots") and ws_mat is not None:
                 try:
-                    ws_mat = get_or_create_ws(doc_bg, "評價截圖素材")
-                    ws_mat.append_row([f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}|||{_review_spec(rev)}"]
-                                      + img_to_chunks_compact(img.copy()))
+                    _heads = {f"{s}_{acc}" for s in _same_stamps}
+                    _old_rows = [n for n, k in enumerate(mat_keys, start=1)
+                                 if str(k or "").split("|||")[0].strip() in _heads]
+                    for _rn in sorted(_old_rows, reverse=True):     # 由下往上刪，列號才不會跑掉
+                        ws_mat.delete_rows(_rn)
+                        mat_keys.pop(_rn - 1)
+                    _key = f"{now.strftime('%Y%m%d_%H%M%S')}_{acc}|||{_review_spec(rev)}"
+                    ws_mat.append_row([_key] + img_to_chunks_compact(img.copy()))
+                    mat_keys.append(_key)
+                    if _old_rows:
+                        job["notes"].append(f"🔁 {acc} 這則評價的截圖素材以前存過，已覆蓋成最新一份（沒有重複新增）。")
                 except Exception as e:
                     job["notes"].append(f"⚠️ {acc} 的截圖素材保存略過（不影響回覆）：{str(e)[:80]}")
+            known_revs.append((_acc_k, _nv, _nt, now.strftime("%Y%m%d_%H%M%S")))   # 同批後面再出現也比得到
 
             # ☁️ 備份原圖到 Google Drive 資料夾，檔名＝「日期 評價圖-規格」
-            if opts.get("save_to_drive"):
+            _drv_hit = next((r for r in drv_rows if r[0].strip().lower() == _acc_k
+                             and _same_review(r[2], r[1], _nv, _nt)), None)
+            if opts.get("save_to_drive") and _drv_hit:
+                job["notes"].append(f"⏭️ {acc} 這則評價 Drive 已備份過（{_drv_hit[3]}），沒有重複上傳。")
+            elif opts.get("save_to_drive"):
                 # 檔名＝「日期 評價圖-規格_帳號」：同一款規格常有十幾位客人，
                 # 只用規格會全部同名分不出來，所以末尾補上帳號。
                 _spec_for_name = _review_spec(rev) or (spec if spec and spec != "無" else acc)
@@ -2083,6 +2149,13 @@ def _batch_worker(job, imgs, opts):
                 ok_d, info_d = upload_img_to_drive(img.copy(), _fname)
                 if ok_d:
                     job["drive_ok"] = job.get("drive_ok", 0) + 1
+                    _drec = [acc, rtime, _nv, _fname, now.strftime("%Y-%m-%d %H:%M:%S")]
+                    drv_rows.append(_drec)
+                    if ws_drv is not None:
+                        try:
+                            ws_drv.append_row(_drec, value_input_option="RAW")
+                        except Exception:
+                            pass
                 else:
                     job["drive_fail"] = job.get("drive_fail", 0) + 1
                     # 失敗原因存在任務裡（不是只印在畫面），連線斷掉也不會不見

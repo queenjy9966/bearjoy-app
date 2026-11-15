@@ -194,6 +194,11 @@ st.markdown("""
         margin: -4px 0 6px 2px !important;
     }
     [data-testid="stPopover"] button:hover { background: #E6E2D8 !important; color: #4A4238 !important; }
+    /* 結果卡的「✏️ 修改」是文字鈕，不套上面的小圓鈕 */
+    [class*="st-key-editpop_"] [data-testid="stPopover"] button {
+        width: auto !important; max-width: none !important; border-radius: 16px !important;
+        padding: 0 14px !important; white-space: nowrap !important; font-weight: 600 !important; margin: 2px 0 0 0 !important;
+    }
     /* ✨ 功能卡片：整塊卡其底色＋外框，標題與內容同屬一個功能面板（沉睡客/優點分析/好評圖/VIP 一致） */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background: #EFEBE2 !important;
@@ -2192,6 +2197,14 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
+# 🏷️ 版本標籤（固定在畫面最上方）：一眼分辨本機版（可用 Claude 月費）還是雲端版（只能用 Gemini）
+_ver_txt, _ver_bg = (("🖥️ 本機版｜可用 Claude 月費", "#5b7c65") if CLAUDE_EXE
+                     else ("☁️ 雲端版｜只能用 Gemini", "#a9835e"))
+st.markdown(f"<div style='position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:1000001;"
+            f"background:{_ver_bg};color:#fff;font-size:12.5px;font-weight:700;padding:4px 12px;"
+            f"border-radius:14px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.12)'>{_ver_txt}</div>",
+            unsafe_allow_html=True)
+
 # ==========================================
 # 5. 主功能區
 # ==========================================
@@ -2466,7 +2479,8 @@ if doc:
                                             unsafe_allow_html=True)
                                 st.code(_it["priv"], language="text")
                                 # ✏️ 改帳號／請 AI 改寫：平常收在小按鈕裡，要用才打開
-                                with st.popover("✏️ 修改", use_container_width=False):
+                                # 包一層 editpop_ 容器：讓這顆不被全站「? 小圓鈕」樣式壓成 30px（11/15 修直排擠扁）
+                                with st.container(key=f"editpop_{_i}"), st.popover("✏️ 修改", use_container_width=False):
                                     _ac1, _ac2 = st.columns([2, 1], vertical_alignment="bottom")
                                     _ac1.markdown('<span class="keep-row" style="display:none"></span>',
                                                   unsafe_allow_html=True)
